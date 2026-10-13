@@ -1,0 +1,349 @@
+import 'package:venera_next/features/favorites/favorites_scope.dart';
+import 'package:venera_next/foundation/application_preferences.dart';
+import 'package:venera_next/foundation/global_preference_store.dart';
+import 'package:flutter/material.dart';
+import 'package:venera_next/components/button.dart';
+import 'package:venera_next/components/gesture.dart';
+import 'package:venera_next/components/menu.dart';
+import 'package:venera_next/components/pop_up_widget.dart';
+import 'package:venera_next/components/window_selection_task.dart';
+import 'package:venera_next/features/comic_source/comic_source.dart';
+import 'package:venera_next/features/favorites/favorite_actions.dart';
+import 'package:venera_next/features/favorites/favorites_constants.dart';
+import 'package:venera_next/features/favorites/favorites_manager.dart';
+import 'package:venera_next/features/favorites/folder_order_dialog.dart';
+import 'package:venera_next/routing/app_navigation.dart';
+import 'package:venera_next/foundation/appdata.dart';
+import 'package:venera_next/foundation/context.dart';
+import 'package:venera_next/foundation/log.dart';
+import 'package:venera_next/foundation/translations.dart';
+import 'package:venera_next/foundation/widget_utils.dart';
+import 'package:venera_next/routing/settings.dart';
+
+abstract interface class FolderList {
+  void update();
+
+  void updateFolders();
+}
+
+class FavoritesFolderSidebar extends StatefulWidget {
+  const FavoritesFolderSidebar({
+    super.key,
+    required this.selectedFolder,
+    required this.isNetworkSelected,
+    required this.onFolderSelected,
+    this.onFolderListReady,
+    this.onSelected,
+    this.withAppbar = false,
+  });
+
+  final String? selectedFolder;
+
+  final bool isNetworkSelected;
+
+  final void Function(bool isNetwork, String? folder) onFolderSelected;
+
+  final ValueChanged<FolderList>? onFolderListReady;
+
+  final VoidCallback? onSelected;
+
+  final bool withAppbar;
+
+  @override
+  State<FavoritesFolderSidebar> createState() => _FavoritesFolderSidebarState();
+}
+
+class _FavoritesFolderSidebarState extends State<FavoritesFolderSidebar>
+    implements FolderList {
+  var folders = <String>[];
+
+  var networkFolders = <String>[];
+  late final FavoriteStoreBinding _store;
+  late final LocalFavoritesManager _manager;
+  late final int _managerGeneration;
+
+  bool get _hasManager =>
+      _store.isCurrent && _manager.connectionGeneration == _managerGeneration;
+
+  void findNetworkFolders() {
+    networkFolders.clear();
+    var all = ComicSource.all()
+        .where((e) => e.favoriteData != null)
+        .map((e) => e.favoriteData!.key)
+        .toList();
+    var settings = GlobalPreferenceStore(
+      appdata.settings,
+    ).read(DiscoveryPreferences.favoritePages);
+    for (var p in settings) {
+      if (all.contains(p) && !networkFolders.contains(p)) {
+        networkFolders.add(p);
+      }
+    }
+  }
+
+  @override
+  void initState() {
+    _store = FavoritesScope.capture(context);
+    _manager = _store.manager;
+    _managerGeneration = _manager.connectionGeneration;
+    widget.onFolderListReady?.call(this);
+    folders = _manager.folderNames;
+    findNetworkFolders();
+    appdata.settings.addListener(updateFolders);
+    _manager.addListener(updateFolders);
+    super.initState();
+  }
+
+  @override
+  void dispose() {
+    appdata.settings.removeListener(updateFolders);
+    _manager.removeListener(updateFolders);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      height: double.infinity,
+      decoration: BoxDecoration(
+        border: Border(
+          right: BorderSide(
+            color: context.colorScheme.outlineVariant,
+            width: 0.6,
+          ),
+        ),
+      ),
+      child: Column(
+        children: [
+          if (widget.withAppbar)
+            SizedBox(
+              height: 56,
+              child: Row(
+                children: [
+                  const SizedBox(width: 8),
+                  const CloseButton(),
+                  const SizedBox(width: 8),
+                  Text("Folders".tl, style: ts.s18),
+                ],
+              ),
+            ).paddingTop(context.padding.top),
+          Expanded(
+            child: ListView.builder(
+              padding: widget.withAppbar
+                  ? EdgeInsets.zero
+                  : EdgeInsets.only(top: context.padding.top),
+              itemCount: folders.length + networkFolders.length + 3,
+              itemBuilder: (context, index) {
+                if (index == 0) {
+                  return buildLocalTitle();
+                }
+                index--;
+                if (index == 0) {
+                  return buildLocalFolder(localAllFolderLabel);
+                }
+                index--;
+                if (index < folders.length) {
+                  return buildLocalFolder(folders[index]);
+                }
+                index -= folders.length;
+                if (index == 0) {
+                  return buildNetworkTitle();
+                }
+                index--;
+                return buildNetworkFolder(networkFolders[index]);
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget buildLocalTitle() {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        children: [
+          Icon(Icons.local_activity, color: context.colorScheme.secondary),
+          const SizedBox(width: 12),
+          Text("Local".tl),
+          const Spacer(),
+          MenuButton(
+            entries: [
+              MenuEntry(
+                icon: Icons.add,
+                text: 'Create Folder'.tl,
+                onClick: () {
+                  if (!_hasManager) return;
+                  newFolder(
+                    context,
+                    onChanged: (next) {
+                      if (!mounted || !_hasManager) return;
+                      setState(() => folders = next);
+                    },
+                  );
+                },
+              ),
+              MenuEntry(
+                icon: Icons.reorder,
+                text: 'Sort'.tl,
+                onClick: () {
+                  if (!_hasManager) return;
+                  final owner = WindowSelectionTask(context);
+                  if (!owner.canPresent) return;
+                  sortFolders(context).then<void>(
+                    (_) {
+                      if (owner.canPresent && _hasManager) updateFolders();
+                    },
+                    onError: (Object error, StackTrace stack) {
+                      Log.error('Favorite folder list', error, stack);
+                    },
+                  );
+                },
+              ),
+            ],
+          ),
+        ],
+      ).paddingHorizontal(16),
+    );
+  }
+
+  Widget buildNetworkTitle() {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      margin: const EdgeInsets.only(top: 8),
+      decoration: BoxDecoration(
+        border: Border(
+          top: BorderSide(
+            color: context.colorScheme.outlineVariant,
+            width: 0.6,
+          ),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.cloud, color: context.colorScheme.secondary),
+          const SizedBox(width: 12),
+          Text("Network".tl),
+          const Spacer(),
+          IconButton(
+            icon: const Icon(Icons.settings),
+            onPressed: () {
+              showPopUpWidget(
+                appNavigation.rootContext,
+                setFavoritesPagesWidget(),
+              );
+            },
+          ),
+        ],
+      ).paddingHorizontal(16),
+    );
+  }
+
+  Widget buildLocalFolder(String name) {
+    bool isSelected =
+        name == widget.selectedFolder && !widget.isNetworkSelected;
+    int count = 0;
+    if (_hasManager) {
+      count = name == localAllFolderLabel
+          ? _manager.totalComics
+          : _manager.folderComics(name);
+    }
+    var folderName = name == localAllFolderLabel
+        ? "All".tl
+        : getFavoriteDataOrNull(name)?.title ?? name;
+    return ClickInkWell(
+      onTap: () {
+        if (isSelected) {
+          return;
+        }
+        widget.onFolderSelected(false, name);
+        widget.onSelected?.call();
+      },
+      child: Container(
+        height: 42,
+        alignment: Alignment.centerLeft,
+        decoration: BoxDecoration(
+          color: isSelected
+              ? context.colorScheme.primaryContainer.toOpacity(0.36)
+              : null,
+          border: Border(
+            left: BorderSide(
+              color: isSelected
+                  ? context.colorScheme.primary
+                  : Colors.transparent,
+              width: 2,
+            ),
+          ),
+        ),
+        padding: const EdgeInsets.only(left: 16),
+        child: Row(
+          children: [
+            Expanded(child: Text(folderName)),
+            Container(
+              margin: EdgeInsets.only(right: 8),
+              padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                color: context.colorScheme.surfaceContainer,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(count.toString()),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget buildNetworkFolder(String key) {
+    var data = getFavoriteDataOrNull(key);
+    if (data == null) {
+      return const SizedBox();
+    }
+    bool isSelected = key == widget.selectedFolder && widget.isNetworkSelected;
+    return ClickInkWell(
+      onTap: () {
+        if (isSelected) {
+          return;
+        }
+        widget.onFolderSelected(true, key);
+        widget.onSelected?.call();
+      },
+      child: Container(
+        height: 42,
+        alignment: Alignment.centerLeft,
+        decoration: BoxDecoration(
+          color: isSelected
+              ? context.colorScheme.primaryContainer.toOpacity(0.36)
+              : null,
+          border: Border(
+            left: BorderSide(
+              color: isSelected
+                  ? context.colorScheme.primary
+                  : Colors.transparent,
+              width: 2,
+            ),
+          ),
+        ),
+        padding: const EdgeInsets.only(left: 16),
+        child: Text(data.title),
+      ),
+    );
+  }
+
+  @override
+  void update() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  @override
+  void updateFolders() {
+    if (!mounted || !_hasManager) return;
+    setState(() {
+      folders = _manager.folderNames;
+      findNetworkFolders();
+    });
+  }
+}

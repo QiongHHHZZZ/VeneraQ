@@ -1,0 +1,33 @@
+--- a/native/build.rs
++++ b/native/build.rs
+@@ -7,9 +7,13 @@
+         PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+     let source_dir = manifest_dir.join("vendor/libavif");
+     let target = env::var("TARGET").expect("TARGET");
+-    let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR"));
++    let out_dir = PathBuf::from("D:/a94-01a12aa6/native-output");
+ 
+     let mut config = cmake::Config::new(&source_dir);
++    config.out_dir(&out_dir);
++    if target.contains("msvc") {
++        config.generator("Ninja");
++    }
+     config
+         .define("BUILD_SHARED_LIBS", "OFF")
+         .define("AVIF_ENABLE_WERROR", "OFF")
+@@ -54,6 +58,15 @@
+ 
+     let installed = config.build();
+     let dav1d_library = find_library_recursive(&out_dir, dav1d_library_name(&target))
++        .or_else(|| {
++            if !target.contains("msvc") {
++                return None;
++            }
++            let library = find_library_recursive(&out_dir, "libdav1d.a")?;
++            let alias = out_dir.join("dav1d.lib");
++            fs::copy(library, &alias).expect("copy MSVC dav1d archive alias");
++            Some(alias)
++        })
+         .unwrap_or_else(|| {
+             panic!(
+                 "The local dav1d build did not produce {} under {}",

@@ -1,0 +1,141 @@
+name: 完整构建
+run-name: 完整构建 ${{ github.ref_name }}
+
+on:
+  workflow_dispatch: {}
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: release-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  Release_Metadata:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: 校验发布元数据
+        run: python3 .github/scripts/validate_release.py
+
+  Quality:
+    needs: Release_Metadata
+    uses: ./.github/workflows/analyze.yml
+
+  Build:
+    needs: [Release_Metadata, Quality]
+    uses: ./.github/workflows/build.yml
+    with:
+      build_android: true
+      build_windows: true
+      build_macos: true
+      build_ios: true
+      build_linux_x64: true
+      build_linux_arm64: true
+    secrets: inherit
+
+  Release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    needs: [Release_Metadata, Quality, Build]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: 校验发布元数据
+        run: python3 .github/scripts/validate_release.py --write-notes release_notes.md
+      - uses: actions/download-artifact@v8
+        with:
+          name: macos_build
+          path: outputs
+      - uses: actions/download-artifact@v8
+        with:
+          name: ios_build
+          path: outputs
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: apk-*
+          path: outputs
+          merge-multiple: true
+      - uses: actions/download-artifact@v8
+        with:
+          name: windows_build
+          path: outputs
+      - uses: actions/download-artifact@v8
+        with:
+          name: deb_build
+          path: outputs
+      - uses: actions/download-artifact@v8
+        with:
+          name: arch_build
+          path: outputs
+      - uses: actions/download-artifact@v8
+        with:
+          name: deb_arm64_build
+          path: outputs
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: linux_extra_*
+          path: outputs
+          merge-multiple: true
+      - name: 生成 Winget Manifest
+        if: ${{ !contains(github.ref_name, '-') }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          python3 .github/scripts/generate_winget_manifest.py \
+            --version "$version" \
+            --installer "outputs/VeneraNext-${version}-windows-installer.exe" \
+            --release-date "$(date -u +%F)" \
+            --output outputs/winget \
+            --print-path
+      - uses: actions/upload-artifact@v7
+        if: ${{ !contains(github.ref_name, '-') }}
+        with:
+          name: winget_manifest
+          path: outputs/winget/manifests
+          if-no-files-found: error
+          retention-days: 14
+      - name: 创建草稿 Release 并上传资产
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          shopt -s nullglob
+          files=(
+            outputs/*.ipa
+            outputs/*.dmg
+            outputs/*.apk
+            outputs/*.zip
+            outputs/*.exe
+            outputs/*.deb
+            outputs/*.rpm
+            outputs/*.zst
+            outputs/*.AppImage
+          )
+          if (( ${#files[@]} == 0 )); then
+            echo "没有找到可发布的构建产物。" >&2
+            exit 1
+          fi
+
+          args=(
+            --title "${GITHUB_REF_NAME}"
+            --notes-file release_notes.md
+            --draft
+          )
+          if [[ "${GITHUB_REF_NAME}" == *-* ]]; then
+            args+=(--prerelease)
+          fi
+          gh release create "${GITHUB_REF_NAME}" "${files[@]}" "${args[@]}"
+      - name: 发布草稿 Release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: gh release edit "${GITHUB_REF_NAME}" --draft=false
+      - name: 清理 jsDelivr CDN 缓存
+        run: |
+          curl -s "https://purge.jsdelivr.net/gh/CyrilPeng/venera-next@main/pubspec.yaml" | jq '.status'
+          curl -s "https://purge.jsdelivr.net/gh/CyrilPeng/venera-next@main/CHANGELOG.md" | jq '.status'

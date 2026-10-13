@@ -1,0 +1,61 @@
+# Documentation Index
+
+Default Chinese index: [README.md](README.md)
+
+This is the English companion index for `doc/`. Documents are grouped by type and use `topic.zh.md` / `topic.en.md` language suffixes. The `experiments/` directory is the exception: experiment plans and task notes are maintained in Chinese only.
+
+## Directory Rules
+
+| Directory | Type | Language rule |
+|---|---|---|
+| `api/` | Developer APIs, extension interfaces, script contracts | Chinese and English |
+| `examples/` | Companion code templates | Shared by both languages; contracts documented in the guides |
+| `development/` | Local development, builds, testing, and developer troubleshooting | Chinese and English; Chinese is the default maintenance entry |
+| `distribution/` | Release, distribution, package manager, and workflow notes | Chinese and English; Chinese is the default maintenance entry |
+| `user/` | User guides, import formats, command-line usage | Chinese and English |
+| `experiments/` | Experiments, task tracking, technical research | Chinese only; not a public roadmap commitment |
+
+## Developer API
+
+Source developers can follow the [authoring guide](api/comic_source.en.md) → [minimal template](examples/minimal_source.js) → [API reference](api/js.en.md) → [local debugging](development/source_debugging.en.md) → [publishing scripts and repositories](api/comic_source.en.md#7-publishing-scripts-and-repositories).
+
+- [漫画源开发说明](api/comic_source.zh.md) / [Comic Source Guide](api/comic_source.en.md)
+- [JavaScript API](api/js.zh.md) / [JavaScript API](api/js.en.md)
+
+## Development and Builds
+
+- [构建与开发](development/build.zh.md) / [Build and Development](development/build.en.md)
+- [漫画源本地调试](development/source_debugging.zh.md) / [Local Source Debugging](development/source_debugging.en.md)
+- [磁盘日志](development/logging.zh.md) / [Disk logs](development/logging.en.md)
+- [依赖治理](development/dependencies.zh.md) / [Dependency Governance](development/dependencies.en.md)
+
+## Distribution
+
+- [Windows 分发](distribution/windows.zh.md) / [Windows Distribution](distribution/windows.en.md)
+- [Linux 安装与分发](distribution/linux.zh.md) / [Linux Installation and Distribution](distribution/linux.en.md)
+
+## User And CLI
+
+- [应用数据同步](user/data_sync.zh.md) / [App-data synchronization](user/data_sync.en.md)
+- [自动选择阅读模式](user/automatic_reader_mode.zh.md) / [Automatic Reader Mode](user/automatic_reader_mode.en.md)
+- [Automatic reading and unavailable images](user/automatic_reading.en.md)
+- [条漫左右边距](user/reader_width.zh.md) / [Reader side margins](user/reader_width.en.md)
+- [漫画源与源仓库](user/source_repositories.zh.md) / [Source repositories](user/source_repositories.en.md)
+- [本地漫画导入](user/import_comic.zh.md) / [Import Comic](user/import_comic.en.md)
+- [无头命令模式](user/headless.zh.md) / [Headless Mode](user/headless.en.md)
+
+## Experiments
+
+- [Source installation task design (Chinese)](experiments/source_installation_tasks.zh.md)
+- [Source repository management design (Chinese)](experiments/source_repositories.zh.md)
+- [图片增强实验](experiments/image_enhancement.zh.md)
+- [去混淆像素复制优化](experiments/image_descrambling.zh.md)
+- [AVIF 格式识别与解码评估](experiments/avif_decoder.zh.md)
+
+## Maintenance Rules
+
+- Keep the root README focused on the most useful user-facing entry points.
+- Except for `experiments/`, every new document should have both Chinese and English versions.
+- Chinese documents are the default entry. If the two versions cannot be perfectly synchronized, keep the Chinese version complete and accurate first.
+- `experiments/` documents record decisions, risks, and tasks before a feature is stable.
+- Comic source documents describe only the extension interface and runtime contract. They must not provide, recommend, maintain, or verify third-party comic sources.

@@ -1,0 +1,7 @@
+name: venera_avif_candidate_probe
+description: Isolated native AVIF compatibility probe; not an application dependency.
+publish_to: none
+environment:
+  sdk: ^3.12.0
+dependencies:
+  libavif: 0.1.1

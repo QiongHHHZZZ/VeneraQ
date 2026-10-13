@@ -1,0 +1,44 @@
+import 'dart:convert';
+
+import 'package:flutter/services.dart';
+
+import 'app_locale.dart';
+
+extension AppTranslation on String {
+  String _translate() {
+    var locale = appLocale;
+    var key = "${locale.languageCode}_${locale.countryCode}";
+    if (locale.languageCode == "en") {
+      key = "en_US";
+    }
+    return (translations[key]?[this]) ?? this;
+  }
+
+  String get tl => _translate();
+
+  String tlParams(Map<String, Object> values) {
+    var res = _translate();
+    for (var entry in values.entries) {
+      res = res.replaceFirst("@${entry.key}", entry.value.toString());
+    }
+    return res;
+  }
+
+  static Map<String, Map<String, String>> translations = const {};
+
+  static Future<void> init() async {
+    var data = await rootBundle.load("assets/translation.json");
+    var json = jsonDecode(utf8.decode(data.buffer.asUint8List()));
+    translations = {
+      for (var e in json.entries) e.key: Map<String, String>.from(e.value),
+    };
+  }
+}
+
+extension ListTranslation on List<String> {
+  List<String> _translate() {
+    return List.generate(length, (index) => this[index].tl);
+  }
+
+  List<String> get tl => _translate();
+}

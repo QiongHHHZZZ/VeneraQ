@@ -1,0 +1,184 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:venera_next/components/message.dart';
+
+void main() {
+  testWidgets(
+    'failed loading route removal keeps its original callback for retry',
+    (tester) async {
+      final navigator = GlobalKey<_FailingNavigatorState>();
+      late BuildContext context;
+      await tester.pumpWidget(
+        MaterialApp(
+          builder: (_, _) => _FailingNavigator(
+            key: navigator,
+            onGenerateRoute: (_) => MaterialPageRoute<void>(
+              builder: (value) {
+                context = value;
+                return const Scaffold();
+              },
+            ),
+          ),
+        ),
+      );
+      var cancellations = 0;
+      var closures = 0;
+      final controller = showLoadingDialog(
+        context,
+        onCancel: () => cancellations++,
+        onClosed: () => closures++,
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(controller.close, throwsA(same(navigator.currentState!.failure)));
+      expect(controller.closed, isFalse);
+      expect(controller.isCurrent, isTrue);
+      expect(closures, 0);
+      expect(find.byType(LinearProgressIndicator), findsOneWidget);
+      navigator.currentState!.fails = false;
+      controller.close();
+      await tester.pumpAndSettle();
+      controller.close();
+      expect(navigator.currentState!.removals, 2);
+      expect(controller.closed, isTrue);
+      expect(closures, 1);
+      expect(cancellations, 0);
+      expect(find.byType(LinearProgressIndicator), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  for (final action in ['button', 'back', 'unmount', 'unbuilt']) {
+    testWidgets('explicit-only loading cancellation: $action', (tester) async {
+      late BuildContext context;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (value) {
+              context = value;
+              return const Scaffold();
+            },
+          ),
+        ),
+      );
+      var cancellations = 0;
+      var closures = 0;
+      final controller = showLoadingDialog(
+        context,
+        onCancel: () => cancellations++,
+        onClosed: () => closures++,
+        cancelOnDismiss: false,
+        cancelButtonText: 'Force',
+      );
+      if (action != 'unbuilt') {
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+      }
+      if (action == 'button') {
+        await tester.tap(find.text('Force'));
+      } else if (action == 'back') {
+        Navigator.of(context).pop();
+      } else {
+        await tester.pumpWidget(const SizedBox());
+        controller.close();
+      }
+      await tester.pumpAndSettle();
+      controller.close();
+      expect(controller.closed, isTrue);
+      expect(cancellations, action == 'button' ? 1 : 0);
+      expect(closures, 1);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  for (final dismissal in ['button', 'back', 'barrier', 'finished']) {
+    testWidgets('loading dialog cancels once on $dismissal', (tester) async {
+      late BuildContext dialogContext;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) {
+              dialogContext = context;
+              return const Scaffold();
+            },
+          ),
+        ),
+      );
+      var cancellations = 0;
+      final controller = showLoadingDialog(
+        dialogContext,
+        onCancel: () => cancellations++,
+        cancelButtonText: 'Stop',
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      switch (dismissal) {
+        case 'button':
+          await tester.tap(find.text('Stop'));
+        case 'back':
+          await Navigator.of(dialogContext).maybePop();
+        case 'barrier':
+          await tester.tapAt(const Offset(10, 10));
+        case 'finished':
+          controller.close();
+      }
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      controller.close();
+      expect(controller.closed, isTrue);
+      expect(cancellations, dismissal == 'finished' ? 0 : 1);
+      expect(find.byType(LinearProgressIndicator), findsNothing);
+    });
+  }
+
+  testWidgets('showToast stacks multiple messages without overlap', (
+    tester,
+  ) async {
+    late BuildContext toastContext;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: OverlayWidget(
+          Builder(
+            builder: (context) {
+              toastContext = context;
+              return const SizedBox.shrink();
+            },
+          ),
+        ),
+      ),
+    );
+
+    showToast(message: 'First toast', context: toastContext, seconds: 1);
+    showToast(message: 'Second toast', context: toastContext, seconds: 1);
+    await tester.pump();
+
+    final firstRect = tester.getRect(find.text('First toast'));
+    final secondRect = tester.getRect(find.text('Second toast'));
+
+    expect(firstRect.overlaps(secondRect), isFalse);
+    expect(firstRect.top, lessThan(secondRect.top));
+
+    await tester.pump(const Duration(seconds: 2));
+    expect(find.text('First toast'), findsNothing);
+    expect(find.text('Second toast'), findsNothing);
+  });
+}
+
+class _FailingNavigator extends Navigator {
+  const _FailingNavigator({super.key, super.onGenerateRoute});
+  @override
+  NavigatorState createState() => _FailingNavigatorState();
+}
+
+class _FailingNavigatorState extends NavigatorState {
+  bool fails = true;
+  int removals = 0;
+  final failure = StateError('route removal failed');
+  @override
+  void removeRoute<T extends Object?>(Route<T> route, [T? result]) {
+    removals++;
+    if (fails) throw failure;
+    super.removeRoute(route, result);
+  }
+}

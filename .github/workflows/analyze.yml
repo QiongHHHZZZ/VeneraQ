@@ -1,0 +1,123 @@
+name: "代码分析"
+on:
+  workflow_call:
+  pull_request:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_call' }}
+
+permissions:
+  contents: read
+
+jobs:
+  apple-directory-access:
+    name: Apple 目录授权与跨会话恢复
+    runs-on: macos-14
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - run: swift test --package-path apple
+
+  rhttp-native:
+    name: Rhttp 原生回调生命周期
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: 验证锁定原生源码的取消与回调收尾
+        env:
+          RUSTFLAGS: --cfg reqwest_unstable
+        run: cargo test --locked --manifest-path packages/rhttp/rust/Cargo.toml --lib
+      - name: 编译 Flutter 测试使用的 Rhttp 库
+        env:
+          RUSTFLAGS: --cfg reqwest_unstable
+        run: cargo build --locked --manifest-path packages/rhttp/rust/Cargo.toml --lib
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux-rhttp-test-library
+          path: packages/rhttp/rust/target/debug/librhttp.so
+          if-no-files-found: error
+          retention-days: 1
+
+  analyze:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+          flutter-version-file: pubspec.yaml
+          architecture: x64
+          cache: true
+      - run: python3 .github/scripts/release_version.py --check
+      - run: python3 .github/scripts/check_structure_imports.py
+      - run: python3 .github/scripts/check_architecture_dependencies.py
+      - run: python3 -m unittest discover -s .github/scripts/tests -p "test_*.py"
+      - run: flutter pub get --enforce-lockfile
+      - name: 准备并验证独立代码审查工具
+        working-directory: tool/code_audit
+        run: |
+          dart pub get --enforce-lockfile
+          dart run bin/self_check.dart
+          dart analyze --fatal-infos
+      - run: dart tool/check_git_dependencies.dart
+      - name: 检查本次修改的 Dart 格式
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        shell: bash
+        run: |
+          if [[ -n "${BASE_SHA:-}" ]]; then
+            diff_range="${BASE_SHA}...HEAD"
+          else
+            diff_range="HEAD^...HEAD"
+          fi
+          mapfile -t dart_files < <(git diff --diff-filter=ACMRTUXB --name-only "$diff_range" -- '*.dart')
+          if (( ${#dart_files[@]} == 0 )); then
+            echo "本次没有修改 Dart 文件。"
+            exit 0
+          fi
+          dart format --output=none --set-exit-if-changed "${dart_files[@]}"
+      - run: flutter analyze --fatal-infos --fatal-warnings
+
+  flutter-tests:
+    name: Flutter 测试与覆盖率
+    needs: rhttp-native
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v7
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+          flutter-version-file: pubspec.yaml
+          architecture: x64
+          cache: true
+      - run: flutter pub get --enforce-lockfile
+      - uses: actions/download-artifact@v8
+        with:
+          name: linux-rhttp-test-library
+          path: build/test-native/lib
+      - name: 准备 Linux 原生测试库
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y cmake ninja-build g++ libsqlite3-dev
+          python3 .github/scripts/prepare_linux_test_libraries.py
+      - run: flutter test --coverage
+        env:
+          LD_LIBRARY_PATH: ${{ github.workspace }}/build/test-native/lib
+      - name: 汇总 Dart 覆盖率
+        run: python3 .github/scripts/report_dart_coverage.py coverage/lcov.info --github-summary
+      - name: 上传 Dart 覆盖率报告
+        uses: actions/upload-artifact@v7
+        with:
+          name: dart-coverage
+          path: coverage/lcov.info
+          if-no-files-found: error
+          retention-days: 14

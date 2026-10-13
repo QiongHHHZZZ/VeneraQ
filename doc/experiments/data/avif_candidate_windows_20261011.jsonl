@@ -1,0 +1,10 @@
+{"case":"environment","platform":"windows","dart":"3.13.5 (stable) (Tue Sep 29 01:00:52 2026 -0700) on \"windows_x64\"","libavif":"1.4.2","codecs":"dav1d [dec]:1.5.4","features":"libyuv:1924","workers":3,"threadsPerWorker":2}
+{"case":"white_1x1.avif","supported":true,"width":1,"height":1,"frameCount":1,"durationUs":1000000,"hasAlpha":false,"sourceBitDepth":8,"reset":true}
+{"case":"abc_color_irot_alpha_irot.avif","supported":false,"error":"AvifException(unsupported): AVIF clean-aperture, rotation, mirror, and pixel-aspect transforms are not supported","elapsedMs":2}
+{"case":"colors-animated-8bpc.avif","supported":true,"width":150,"height":150,"frameCount":5,"durationUs":166665,"hasAlpha":false,"sourceBitDepth":8,"reset":true}
+{"case":"colors-animated-8bpc-alpha-exif-xmp.avif","supported":true,"width":150,"height":150,"frameCount":5,"durationUs":833335,"hasAlpha":true,"sourceBitDepth":8,"reset":true}
+{"case":"white_pixels","pixels":[253,253,253,255],"rowBytes":4}
+{"case":"truncated","rejected":true,"code":"invalidInput","elapsedMs":0}
+{"case":"invalid","rejected":true,"code":"invalidInput","elapsedMs":0}
+{"case":"input_limit","rejected":true,"code":"limitExceeded","elapsedMs":0}
+{"case":"cancel_then_decode","requested":32,"accepted":32,"cancelled":32,"completed":0,"subsequentDecode":true}

@@ -1,0 +1,142 @@
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:libavif/libavif.dart';
+
+const deadline = Duration(seconds: 10);
+
+void report(Map<String, Object?> result) => stdout.writeln(jsonEncode(result));
+
+Future<Map<String, Object?>> sequence(Uint8List bytes) async {
+  final decoder = await AvifSequenceDecoder.open(bytes).timeout(deadline);
+  try {
+    var count = 0;
+    var durationUs = 0;
+    while (true) {
+      final frame = await decoder.nextFrame().timeout(deadline);
+      if (frame == null) break;
+      if (++count > 1000) throw StateError('Unexpected frame count');
+      final image = frame.image;
+      if (image.pixels.length != image.rowBytes * image.height) {
+        throw StateError('Invalid pixel buffer length');
+      }
+      durationUs += frame.duration.inMicroseconds;
+    }
+    if (count != decoder.info.frameCount) {
+      throw StateError('Declared and decoded frame counts differ');
+    }
+    await decoder.reset().timeout(deadline);
+    if (await decoder.nextFrame().timeout(deadline) == null) {
+      throw StateError('Reset did not rewind the sequence');
+    }
+    return {
+      'width': decoder.info.width,
+      'height': decoder.info.height,
+      'frameCount': count,
+      'durationUs': durationUs,
+      'hasAlpha': decoder.info.hasAlpha,
+      'sourceBitDepth': decoder.info.sourceBitDepth,
+      'reset': true,
+    };
+  } finally {
+    decoder.dispose();
+  }
+}
+
+Future<void> main(List<String> args) async {
+  if (args.length != 1) {
+    stderr.writeln('Usage: dart run bin/probe.dart <AVIF fixture directory>');
+    exitCode = 64;
+    return;
+  }
+  final fixtures = Directory(args.single).absolute;
+  report({
+    'case': 'environment',
+    'platform': Platform.operatingSystem,
+    'dart': Platform.version,
+    'libavif': Avif.nativeVersion,
+    'codecs': Avif.nativeCodecVersions,
+    'features': Avif.nativeFeatures,
+    'workers': Avif.asyncWorkerCount,
+    'threadsPerWorker': Avif.asyncThreadsPerWorker,
+  });
+  for (final name in [
+    'white_1x1.avif',
+    'abc_color_irot_alpha_irot.avif',
+    'colors-animated-8bpc.avif',
+    'colors-animated-8bpc-alpha-exif-xmp.avif',
+  ]) {
+    final clock = Stopwatch()..start();
+    try {
+      final bytes = await File('${fixtures.path}/$name').readAsBytes();
+      final result = await sequence(bytes);
+      report({'case': name, 'supported': true, ...result});
+    } catch (error) {
+      report({
+        'case': name,
+        'supported': false,
+        'error': error.toString(),
+        'elapsedMs': clock.elapsedMilliseconds,
+      });
+    }
+  }
+  final white = await File('${fixtures.path}/white_1x1.avif').readAsBytes();
+  final valid = await Avif.decode(white).timeout(deadline);
+  report({
+    'case': 'white_pixels',
+    'pixels': valid.pixels.toList(),
+    'rowBytes': valid.rowBytes,
+  });
+  // This lossy fixture is near-white; Pillow's independent decode is 253 RGB.
+  if (valid.width != 1 ||
+      valid.height != 1 ||
+      valid.pixels.length != 4 ||
+      valid.pixels.take(3).any((value) => value != 253) ||
+      valid.pixels[3] != 255) {
+    throw StateError('White sample did not match the reference RGBA pixels');
+  }
+  for (final (name, bytes, options) in [
+    (
+      'truncated',
+      Uint8List.sublistView(white, 0, 64),
+      const AvifDecodeOptions(),
+    ),
+    ('invalid', Uint8List.fromList([1, 2, 3, 4]), const AvifDecodeOptions()),
+    ('input_limit', white, const AvifDecodeOptions(maxInputBytes: 32)),
+  ]) {
+    final clock = Stopwatch()..start();
+    try {
+      await Avif.decode(bytes, options: options).timeout(deadline);
+      throw StateError('$name was unexpectedly accepted');
+    } on AvifException catch (error) {
+      report({
+        'case': name,
+        'rejected': true,
+        'code': error.code.name,
+        'elapsedMs': clock.elapsedMilliseconds,
+      });
+    }
+  }
+  final operations = List.generate(32, (_) => Avif.startDecode(white));
+  final results = operations.map((operation) async {
+    try {
+      await operation.result.timeout(deadline);
+      return 'completed';
+    } on AvifException catch (error) {
+      if (error.code != AvifErrorCode.cancelled) rethrow;
+      return 'cancelled';
+    }
+  }).toList();
+  final accepted = operations.where((operation) => operation.cancel()).length;
+  final settled = await Future.wait(results);
+  await Avif.decode(white).timeout(deadline);
+  report({
+    'case': 'cancel_then_decode',
+    'requested': operations.length,
+    'accepted': accepted,
+    'cancelled': settled.where((value) => value == 'cancelled').length,
+    'completed': settled.where((value) => value == 'completed').length,
+    'subsequentDecode': true,
+  });
+}
