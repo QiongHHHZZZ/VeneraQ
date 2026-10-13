@@ -551,7 +551,7 @@ class _WindowBrand extends StatelessWidget {
   Widget build(BuildContext context) {
     final foreground = dark ? Colors.white : Colors.black;
     final title = Text(
-      'VeneraNext',
+      'VeneraQ',
       style: TextStyle(fontSize: 13, color: foreground),
       overflow: TextOverflow.ellipsis,
       maxLines: 1,
@@ -566,7 +566,7 @@ class _WindowBrand extends StatelessWidget {
     return Align(
       alignment: Alignment.centerLeft,
       child: Semantics(
-        label: 'VeneraNext',
+        label: 'VeneraQ',
         child: ConstrainedBox(
           constraints: const BoxConstraints(minWidth: 32),
           child: Row(

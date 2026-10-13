@@ -1,7 +1,7 @@
 /*
-VeneraNext JavaScript Library
+VeneraQ JavaScript Library
 
-This library provides a set of APIs for interacting with the VeneraNext app.
+This library provides a set of APIs for interacting with the VeneraQ app.
 */
 
 /**

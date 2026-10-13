@@ -102,7 +102,7 @@ class _SponsorsPageState extends State<SponsorsPage> {
   Widget _buildContent(SponsorCatalog catalog) {
     var children = <Widget>[
       Text(
-        "Thanks to all sponsors who support the continuous maintenance of VeneraNext."
+        "Thanks to all sponsors who support VeneraQ."
             .tl,
         style: const TextStyle(fontSize: 14),
       ).paddingHorizontal(16).paddingTop(8),

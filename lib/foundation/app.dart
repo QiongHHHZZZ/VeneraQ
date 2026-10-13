@@ -32,8 +32,8 @@ class _App {
   late String cachePath;
   String? externalStoragePath;
 
-  static const _windowsCompanyDirectory = 'com.github.cyrilpeng';
-  static const _windowsProductDirectory = 'VeneraNext';
+  static const _windowsCompanyDirectory = 'com.veneraq';
+  static const _windowsProductDirectory = 'VeneraQ';
   static const _legacyWindowsDirectories = [
     ('CyrilPeng_venera-next', 'VeneraNext'),
     ('CyrilPeng_venera-next', 'venera'),

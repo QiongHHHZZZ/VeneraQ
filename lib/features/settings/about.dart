@@ -87,7 +87,7 @@ class _AboutSettingsState extends State<AboutSettings> {
             const SizedBox(height: 8),
             Text("V${App.version}", style: const TextStyle(fontSize: 16)),
             Text(
-              "VeneraNext is a free and open-source app for comic reading.".tl,
+              "VeneraQ is a free and open-source comic reader.".tl,
             ),
             const SizedBox(height: 8),
           ],
@@ -122,7 +122,7 @@ class _AboutSettingsState extends State<AboutSettings> {
           title: const Text("Github"),
           trailing: const Icon(Icons.open_in_new),
           onTap: () {
-            launchUrlString("https://github.com/CyrilPeng/venera-next");
+            launchUrlString("https://github.com/VeneraQ/VeneraQ");
           },
         ).toSliver(),
         ListTile(

@@ -1,7 +1,7 @@
 name: venera_next
-description: "A comic app."
+description: "VeneraQ - a comic reader for Android."
 publish_to: 'none'
-homepage: https://github.com/CyrilPeng/venera-next
+homepage: https://github.com/VeneraQ/VeneraQ
 version: 1.17.0+228
 
 environment:
@@ -117,7 +117,7 @@ flutter_to_arch:
   icon: debian/gui/venera-next.png
   categories: Utility
   keywords: Flutter;comic;images;
-  url: https://github.com/CyrilPeng/venera-next
+  url: https://github.com/VeneraQ/VeneraQ
   depends:
     - gtk3
     - webkit2gtk-4.1

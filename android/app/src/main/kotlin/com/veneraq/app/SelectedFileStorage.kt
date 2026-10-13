@@ -1,4 +1,4 @@
-package com.github.cyrilpeng.veneranext
+package com.veneraq.app
 
 import java.io.DataInputStream
 import java.io.DataOutputStream
