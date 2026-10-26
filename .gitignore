@@ -27,6 +27,8 @@ migrate_working_dir/
 .pub/
 /build/
 /coverage/
+# FVM 版本缓存（.fvmrc 本身要提交，缓存不要）
+.fvm/
 
 # 本机原生库（sqlite3 的 Windows 测试依赖，不进版本库）
 *.dll
