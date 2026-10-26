@@ -73,6 +73,13 @@ RETIRED_DART_PATHS = {
     ),
 }
 RETIRED_DART_DIRS = {
+    LIB_DIR / "features" / "comic_storage": (
+        "comic_storage was a shared primitive, not a business domain; "
+        "it now lives at foundation/comic_storage.dart"
+    ),
+    LIB_DIR / "features" / "image_favorites": (
+        "image favorites was removed; the reader no longer collects single images"
+    ),
     LIB_DIR / "utils": (
         "utils/ has been retired; use foundation/ for cross-domain primitives "
         "or features/<domain>/ for domain-specific helpers"
@@ -264,12 +271,6 @@ RETIRED_PART_TARGETS = {
             "implementation file"
         ),
     },
-    _feature_path("history", "history_manager.dart"): {
-        "image_favorites.dart": (
-            "image favorites management belongs in an independent history "
-            "feature implementation file"
-        )
-    },
     _feature_path("favorites", "favorites_page.dart"): {
         "favorite_actions.dart": (
             "favorite actions belong in an independent favorites "
@@ -286,20 +287,6 @@ RETIRED_PART_TARGETS = {
         "side_bar.dart": (
             "favorites folder sidebar belongs in an independent favorites "
             "implementation file"
-        )
-    },
-    _feature_path("image_favorites", "image_favorites_page.dart"): {
-        "image_favorites_gallery_page.dart": (
-            "image favorites gallery page belongs in an independent "
-            "image_favorites implementation file"
-        ),
-        "image_favorites_item.dart": (
-            "image favorites item belongs in an independent image_favorites "
-            "implementation file"
-        ),
-        "image_favorites_photo_view.dart": (
-            "image favorites photo view belongs in an independent "
-            "image_favorites implementation file"
         )
     },
     _feature_path("settings", "app.dart"): {
@@ -360,11 +347,6 @@ NO_PART_TARGETS = {
     _feature_path("favorites", "favorites_page.dart"): (
         "favorites_page.dart must remain a normal favorites implementation "
         "file; split favorites views and widgets into independent files instead"
-    ),
-    _feature_path("image_favorites", "image_favorites_page.dart"): (
-        "image_favorites_page.dart must remain a normal image_favorites "
-        "implementation file; split image favorites views and widgets into "
-        "independent files instead"
     ),
     _feature_path("settings", "settings_page.dart"): (
         "settings_page.dart must remain a normal settings implementation file; "
@@ -456,9 +438,6 @@ RETIRED_PART_OF_PATHS = {
     _feature_path("comic_details", "actions.dart"): (
         "comic details actions must not be part of comic_page.dart"
     ),
-    _feature_path("history", "image_favorites.dart"): (
-        "image favorites management must not be part of history_manager.dart"
-    ),
     _feature_path("favorites", "favorite_actions.dart"): (
         "favorite actions must not be part of favorites_page.dart"
     ),
@@ -470,15 +449,6 @@ RETIRED_PART_OF_PATHS = {
     ),
     _feature_path("favorites", "side_bar.dart"): (
         "favorites folder sidebar must not be part of favorites_page.dart"
-    ),
-    _feature_path("image_favorites", "image_favorites_photo_view.dart"): (
-        "image favorites photo view must not be part of image_favorites_page.dart"
-    ),
-    _feature_path("image_favorites", "image_favorites_gallery_page.dart"): (
-        "image favorites gallery page must not be part of image_favorites_page.dart"
-    ),
-    _feature_path("image_favorites", "image_favorites_item.dart"): (
-        "image favorites item must not be part of image_favorites_page.dart"
     ),
     _feature_path("settings", "setting_components.dart"): (
         "shared settings widgets must not be part of settings_page.dart"
@@ -540,9 +510,8 @@ FOUNDATION_ENTRYPOINT_TARGETS = {
 UTILS_IO_PATH = (LIB_DIR / "utils" / "io.dart").resolve()
 FILE_SYSTEM_ENTRYPOINT_PATH = (LIB_DIR / "foundation" / "file_system.dart").resolve()
 
-# Managers and transfer services enrolled in dependency_baseline.json are
-# business entry points themselves. Do not redirect them through UI barrels;
-# check_architecture_dependencies.py enforces their complete dependency graph.
+# Managers and transfer services below are business entry points themselves.
+# Do not redirect them through UI barrels.
 FEATURE_ENTRYPOINT_TARGETS = {
     _feature_path("comic_source", "source_update_service.dart"): _feature_path(
         "comic_source", "comic_source_api.dart"
@@ -658,10 +627,6 @@ FEATURE_ENTRYPOINT_TARGETS = {
         "favorites",
         "favorites.dart",
     ),
-    _feature_path("follow_updates", "follow_updates_page.dart"): _feature_path(
-        "follow_updates",
-        "follow_updates.dart",
-    ),
     _feature_path("history", "history_page.dart"): _feature_path(
         "history",
         "history.dart",
@@ -669,37 +634,6 @@ FEATURE_ENTRYPOINT_TARGETS = {
     _feature_path("history", "history_summary.dart"): _feature_path(
         "history",
         "history.dart",
-    ),
-    _feature_path("history", "image_favorites_models.dart"): _feature_path(
-        "history",
-        "history_api.dart",
-    ),
-    _feature_path("image_favorites", "image_favorites_page.dart"): _feature_path(
-        "image_favorites",
-        "image_favorites.dart",
-    ),
-    _feature_path(
-        "image_favorites",
-        "image_favorites_summary.dart",
-    ): _feature_path(
-        "image_favorites",
-        "image_favorites.dart",
-    ),
-    _feature_path("image_favorites", "type.dart"): _feature_path(
-        "image_favorites",
-        "image_favorites.dart",
-    ),
-    _feature_path("comic_storage", "archive_metadata.dart"): _feature_path(
-        "comic_storage",
-        "comic_storage.dart",
-    ),
-    _feature_path("comic_storage", "comic_file_rules.dart"): _feature_path(
-        "comic_storage",
-        "comic_storage.dart",
-    ),
-    _feature_path("comic_storage", "file_system_layout.dart"): _feature_path(
-        "comic_storage",
-        "comic_storage.dart",
     ),
     _feature_path(
         "local_comics",
@@ -855,7 +789,6 @@ FEATURE_ENTRYPOINT_TARGETS = {
 FILE_SYSTEM_DIRECT_IMPORT_SOURCES = {
     _feature_path("comic_source", "comic_source_manager.dart"),
     _feature_path("favorites", "favorite_cover_cache.dart"),
-    _feature_path("history", "image_favorites_provider.dart"),
     _feature_path("local_comics", "downloading_page.dart"),
     _feature_path("local_comics", "import_export", "cbz.dart"),
     _feature_path("local_comics", "local_comic_image.dart"),

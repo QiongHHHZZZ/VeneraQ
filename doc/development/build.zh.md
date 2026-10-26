@@ -1,83 +1,97 @@
 # 构建与开发
 
-English version: [build.en.md](build.en.md)
+本文面向从源码构建、修改 VeneraQ 的开发者。安装和使用说明见仓库根目录的 [README](../../README.md)。
 
-本文面向准备从源码构建、测试或维护 VeneraNext 的开发者。安装和使用说明请阅读仓库根目录的 [README](../../README.md)。
+## 项目形态
+
+- VeneraQ 是 Venera-Next 的 fork，**只构建 Android，只产出 release 包**。
+- 其他平台的目录（`windows/`、`linux/`、`macos/`、`ios/`、`apple/`、`debian/`、
+  `fastlane/`、`patch/`）已删除，对应 CI job 也已移除。
+- **没有 `test/` 目录**：测试套件不再随仓库提供，验证靠静态分析与实机验收。
+
+`lib/` 里仍保留着按平台分支的判断（`Platform.isWindows` 等）。它们是兼容代码，安卓运行时
+不会走到那些分支；以后要恢复某个平台时，这些分支可以直接复用。
 
 ## 环境要求
 
 - Flutter `3.41.4`
 - Dart `>=3.8.0 <4.0.0`
-- JDK `17`，用于 Android 构建
-- Rust 工具链；Android 构建需要安装对应 Android targets
-- 目标平台原生构建环境，例如 Android SDK / NDK、Xcode、Visual Studio 或 Linux GTK/WebKit 依赖
-- Windows 本地构建需要开启系统“开发者模式”；PDF 导入依赖的 `pdfrx` native assets 会在构建时创建符号链接
+- JDK `17`
+- Rust 工具链（含 Android targets）
+- Android SDK / NDK
 
-先检查 Flutter 环境：
-
-```bash
+```powershell
 flutter doctor -v
 flutter --version
 ```
 
 ## 获取依赖
 
-克隆仓库后，使用仓库锁文件获取依赖：
-
 ```bash
-git clone https://github.com/CyrilPeng/venera-next.git
-cd venera-next
+git clone https://github.com/VeneraQ/VeneraQ.git
+cd VeneraQ
 flutter pub get --enforce-lockfile
 ```
 
-不要在不了解依赖影响的情况下删除或重新生成 `pubspec.lock`。
+不要在不了解影响的情况下删除或重新生成 `pubspec.lock`。Git fork 的来源、固定 commit
+和升级要求见[依赖治理](dependencies.zh.md)。
 
-Git fork 的来源、固定 commit 和升级要求见[依赖治理](dependencies.zh.md)。
+### 联网与代理
+
+有 6 个依赖指向 GitHub（`flutter_qjs`、`flutter.widgets`、`desktop_webview_window`、
+`flutter_inappwebview`、`lodepng_flutter`、`flutter_saf`），版本锁在具体 commit 上。
+
+`pub get` 的联网只用于询问“仓库分支有无更新”。网络不好时这一步会长时间挂起，
+所以**日常编译一律加 `--no-pub`**，只在改过 `pubspec.yaml` 后联网一次。
+
+需要代理时，只在单条命令里临时设置，不要写进系统配置：
+
+```powershell
+cmd /c "set HTTPS_PROXY=http://127.0.0.1:7897&& flutter pub get --enforce-lockfile"
+```
 
 ### 关键依赖锁定
 
-项目依赖 `rhttp 0.15.1`，必须保持 `flutter_rust_bridge 2.11.1`。版本不匹配时，构建可能成功，但应用启动后无法联网，并提示：
+`rhttp` 必须与 `flutter_rust_bridge 2.11.1` 配套。版本不匹配时构建会成功，但应用启动后
+无法联网，日志提示：
 
 ```text
 flutter_rust_bridge has not been initialized
 ```
 
-在 PowerShell 中可以检查锁定版本：
+检查锁定版本：
 
 ```powershell
 Select-String pubspec.lock -Pattern "flutter_rust_bridge" -Context 0,6
 ```
 
-结果应包含：
+结果应包含 `version: "2.11.1"`。
 
-```yaml
-version: "2.11.1"
+## 编译 APK
+
+**一律 release，不碰 debug。**
+
+```powershell
+flutter build apk --release --no-pub --target-platform android-arm64
 ```
 
-## 质量检查
+- `--target-platform android-arm64`：只编手机需要的架构。
+- `--no-pub`：跳过依赖校验，见上文。
+- 产物：`build/app/outputs/flutter-apk/app-release.apk`，编译约 12-20 秒。
 
-提交代码前至少运行：
+### 为什么不用 debug
 
-```bash
-python .github/scripts/check_structure_imports.py
-flutter analyze --no-pub
-flutter test --no-pub
-git diff --check
-```
+debug 构建代价是 release 的两倍以上，还会让 cargokit 为 `android-x86` 额外编一份
+Rust 产物（`packages/rhttp/cargokit/gradle/plugin.gradle` 中
+`if (buildType == "debug") platforms.add("android-x86")`），而
+`android/app/build.gradle` 的 `abiFilters` 只保留 `armeabi-v7a`、`arm64-v8a`、`x86_64`，
+**这份产物永远进不了 APK**。
 
-CI 会使用 `flutter test --coverage` 生成 `coverage/lcov.info`，在工作流摘要中显示行覆盖率，并上传报告产物。当前覆盖率用于建立可见基线，尚未设置统一硬阈值；涉及关键业务路径的改动仍必须增加针对性测试。
+需要装到设备上验证时，直接安装 release APK。
 
-PR 还会运行 `依赖安全审查` 和 `PR 平台冒烟构建`。依赖审查会阻止引入高危或严重漏洞依赖；当改动涉及 Flutter 代码、原生平台目录、依赖、构建脚本或工作流时，平台工作流会执行 Android Debug 和 Windows Debug 构建，文档等不影响构建的改动会跳过这两个平台任务。Dart 格式检查只针对本次修改的 Dart 文件执行，避免历史格式差异阻塞后续贡献。`main` 分支要求 PR 通过代码分析、依赖审查和平台冒烟构建门禁，并禁止直接强推或删除分支。
+### 签名
 
-涉及发布版本时再运行：
-
-```bash
-python .github/scripts/release_version.py --check
-```
-
-## Android 构建
-
-本地 release 签名文件放置在：
+本地 release 签名文件放在：
 
 ```text
 android/keystore.jks
@@ -93,88 +107,103 @@ keyAlias=你的 key alias
 storeFile=../keystore.jks
 ```
 
-构建 APK：
+签名文件和密码属于敏感信息，不得提交到仓库。
 
-```bash
-flutter pub get --enforce-lockfile
-flutter build apk --release
+## 验证改动
+
+按顺序执行，前两项是 CI 的门禁：
+
+```powershell
+flutter analyze --no-pub --fatal-infos --fatal-warnings   # 约 8 秒
+python .github/scripts/check_structure_imports.py
+python -m unittest discover -s .github/scripts/tests -p "test_*.py"
 ```
 
-构建产物通常位于 `build/app/outputs/apk/release/`。
+发布相关改动再加：
 
-签名文件和密码属于敏感信息，不应提交到仓库。
-
-## 桌面端与 iOS 构建
-
-在对应操作系统和原生工具链就绪后执行：
-
-```bash
-flutter pub get --enforce-lockfile
-flutter build windows
-flutter build linux
-flutter build macos
+```powershell
+python .github/scripts/release_version.py --check
 ```
 
-iOS 可先执行无签名构建验证：
+**不要运行 `flutter test`**：`test/` 已不存在，它只会报“没有测试”。
 
-```bash
-flutter pub get --enforce-lockfile
-flutter build ios --release --no-codesign
+## 磁盘占用
+
+`build/` 只应保留 release 产物与 Rust release 缓存（约 5-6 GB）。下面这些属于永久无用或
+可再生的产物，可随时删除：
+
+```text
+build/app/intermediates/merged_native_libs/debug
+build/app/intermediates/stripped_native_libs/debug
+build/app/outputs/flutter-apk/*debug*.apk
+build/app/outputs/{apk,mapping,native-debug-symbols}
+build/*/build/i686-linux-android
+build/*/build/*/debug
 ```
 
-Windows 安装器、便携包和 winget manifest 的维护方法见 [Windows 分发](../distribution/windows.zh.md)。
+删掉这几个目录后，`flutter build apk --release --no-pub` 仍能在十几秒内完成。
 
-## GitHub Actions 与发布版本
+依赖缓存不在仓库里，位于 `G:\DevCache`（`PUB_CACHE` / `GRADLE_USER_HOME` / `CARGO_HOME`）。
+它们在硬盘上，重启不会丢失；删除会使下一次构建重新下载，代价是几十分钟。
 
-仓库工作流负责持续集成、手动构建、tag 发布和分发元数据维护。发布版本号统一维护在 `release.json`：
+## 发布版本
+
+版本号统一维护在 `release.json`：
 
 ```json
 {
-  "version": "1.2.3",
-  "build": 123
+  "version": "2.0.0",
+  "build": 1
 }
 ```
 
-准备发布时先更新 `release.json`，再同步并校验相关文件：
+发布前更新它，再同步并校验：
 
 ```bash
 python .github/scripts/release_version.py --write
-python .github/scripts/release_version.py --check --tag v1.2.3
+python .github/scripts/release_version.py --check --tag v2.0.0
 ```
 
-`pubspec.yaml`、发布 tag 和 `CHANGELOG.md` 版本章节必须与 `release.json` 一致。`alt_store.json` 不是版本源；正式版 GitHub Release 成功后，工作流会根据发布资产更新它，RC 预发布不会更新 AltStore 源。
+`pubspec.yaml`、发布 tag 与 `CHANGELOG.md` 的版本章节必须与 `release.json` 一致。
 
-`代码分析` 工作流会运行版本与结构检查、Python 脚本测试、修改文件的 Dart 格式检查、`flutter analyze`、完整 Dart 测试及覆盖率汇总。`依赖安全审查` 会检查 PR 新增或升级的依赖，`PR 平台冒烟构建` 会按改动范围验证 Android 和 Windows 编译。`完整构建` 在开始多平台构建前会复用同一质量工作流；手动平台构建和 tag 发布则共同复用 `.github/workflows/build.yml`，避免两套构建定义产生差异。
+### CI 工作流
 
-Android release 工作流需要以下仓库 Secrets：
+| 工作流 | 内容 |
+|---|---|
+| `代码分析` | 版本与结构检查、Python 脚本测试、修改文件的 Dart 格式检查、`flutter analyze` |
+| `依赖安全审查` | 检查 PR 新增或升级的依赖 |
+| `PR 平台冒烟构建` | 按改动范围验证 Android 编译 |
+| `完整构建` | tag 发布时复用同一质量工作流，再走 `build.yml` |
+
+Android release 需要以下仓库 Secrets：
 
 - `ANDROID_KEYSTORE`：keystore 文件的 Base64 内容
 - `ANDROID_KEY_PROPERTIES`：`key.properties` 文本内容
 
-发布后的 AltStore 更新会复用固定分支 `automation/update-altstore` 并创建 PR。仓库需要配置可向当前仓库推送分支并创建 PR 的 `ALTSTORE_PR_TOKEN`；未单独配置时会复用 `WINGET_PKGS_TOKEN`。令牌缺失或 PR 创建失败会使任务明确失败，不再产生只有分支、没有 PR 的成功记录。
-
-AI Issue 检查默认关闭。仅在确认 `API_URL`、`API_KEY` 可用后，将仓库变量 `ENABLE_AI_ISSUE_CHECK` 设为 `true`；可通过 `ISSUE_CHECK_MODEL` 覆盖默认模型。该流程只发表评论和关闭建议，不会自动关闭 Issue。
-
-不要把 Secrets、签名文件或实际密码写入代码、日志和文档示例。
-
-## 构建问题排查
+## 问题排查
 
 ### 构建成功但应用无法联网
 
-优先确认 `flutter_rust_bridge` 仍为 `2.11.1`，并确认依赖是通过当前仓库的 `pubspec.lock` 获取。不要通过盲目升级依赖解决初始化错误。
+先确认 `flutter_rust_bridge` 仍是 `2.11.1`，且依赖来自本仓库的 `pubspec.lock`。
+不要靠盲目升级依赖解决初始化错误。
 
-### 提示 `flutter_rust_bridge has not been initialized`
+### 编译长时间停在 `Running "flutter pub get"...`
 
-通常是依赖版本漂移。恢复仓库中的 `pubspec.lock`，确认 Flutter 版本符合要求，再运行：
+`pub get` 在联网校验那 6 个 GitHub 依赖。网络不通时它会一直挂着。
 
-```bash
-flutter pub get --enforce-lockfile
-```
+处理：中断后改用 `--no-pub` 跳过；需要更新依赖时再用代理联网一次。
 
 ### 提示 `Unable to satisfy pubspec.yaml using pubspec.lock`
 
-通常是 Flutter/Dart 版本或包源环境不匹配。先核对本页要求的 Flutter 版本和 `flutter doctor -v` 输出，不要直接删除锁文件。
+通常是 Flutter/Dart 版本或包源环境不匹配。核对本页要求的版本与 `flutter doctor -v`
+输出，不要直接删锁文件。
 
 ### Gradle 下载过慢
 
-可以在本地临时切换 Gradle wrapper 镜像或配置网络代理，但环境相关地址不应提交到仓库。提交前应确认 `gradle-wrapper.properties` 没有混入本地镜像改动。
+可临时切换 Gradle wrapper 镜像或配置网络代理，但**环境相关地址不得提交到仓库**。
+提交前确认 `gradle-wrapper.properties` 没混入本地镜像改动。
+
+### 磁盘持续变大
+
+按上文「磁盘占用」一节清理。常见来源是打过 debug 包后留下的
+`merged_native_libs/debug` 与各架构的 Rust debug 产物，单个架构可达 1.6 GB。

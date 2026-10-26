@@ -1,7 +1,5 @@
 # 漫画源本地调试
 
-English: [Local Source Debugging](source_debugging.en.md)
-
 接口定义见 [漫画源开发说明](../api/comic_source.zh.md) 和 [JavaScript API](../api/js.zh.md)。本文说明脚本导入、修改、重新加载和错误定位流程。
 
 本文的统一添加、任务重载、编辑器保存重载和异步调试器改进属于当前主分支未发布功能；v1.16.0 仍使用旧的链接/文件导入入口。首次编写可复制[最小模板](../examples/minimal_source.js)，按[示例接口约定](../api/comic_source.zh.md#1-脚本与最小示例)替换虚构服务地址和字段。

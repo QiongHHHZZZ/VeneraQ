@@ -8,11 +8,9 @@
 
 ## 当前宿主的实际结果
 
-环境：Windows x64、Flutter 3.41.4、Dart 3.11.4。执行：
+环境：Windows x64、Flutter 3.41.4、Dart 3.11.4。
 
-```powershell
-flutter test --no-pub tool/avif_codec_probe.dart
-```
+> 当时使用的探针 `tool/avif_codec_probe.dart` 已随 `tool/` 清理删除，下表保留测量结果。
 
 | libavif 测试样本 | Flutter 宿主解码结果 |
 |---|---|
@@ -23,7 +21,7 @@ flutter test --no-pub tool/avif_codec_probe.dart
 
 以探测输出中的 `supported`、尺寸和 `frameCount` 逐项评估。此结果只覆盖当前 Windows 测试宿主；Android、iOS、macOS、Linux 以及其他 Windows 安装环境仍需分别验证。动画样本的首帧显示成功，完整动画能力仍需支持多个帧。
 
-样本来源、固定提交、SHA-256 和许可证见 [AVIF 测试夹具](../../test/fixtures/avif/README.md)。
+样本来源、固定提交、SHA-256 和许可证的记录已随测试套件移除。
 
 ## 候选依赖
 
@@ -36,13 +34,9 @@ flutter test --no-pub tool/avif_codec_probe.dart
 
 对 `flutter_avif_windows 3.1.0` 的独立进程探测：1×1 白色样本获得 19 字节回包；将有效 AVIF 截断到 64 字节后，原生线程报告 `Couldn't decode the image. Code: 20`，3 秒内没有结果或错误回包。源码中 `_init_memory_decoder`／`_get_next_frame` 的失败分支会 panic，Dart 桥接的 `RawReceivePort` 只等待成功回包。该路径会遗留等待和原生资源，单纯增加 Dart 超时无法补齐原生释放。
 
-原生候选探测使用单独的程序和从对应 pub.dev 归档解压出的 DLL，未添加应用依赖或捆绑该二进制：
+原生候选探测曾用单独的程序和从对应 pub.dev 归档解压出的 DLL 完成，未添加应用依赖或捆绑该二进制。
 
-```powershell
-dart compile exe tool/avif_native_candidate_probe.dart -o build/avif-candidate-probe.exe
-build/avif-candidate-probe.exe <flutter_avif.dll 的绝对路径> test/fixtures/avif/white_1x1.avif
-build/avif-candidate-probe.exe <flutter_avif.dll 的绝对路径> test/fixtures/avif/abc_color_irot_alpha_irot.avif 64
-```
+> 探针 `tool/avif_native_candidate_probe.dart` 与测试样本目录均已删除，结论保留如下。
 
 ## 接入条件
 
@@ -52,7 +46,7 @@ build/avif-candidate-probe.exe <flutter_avif.dll 的绝对路径> test/fixtures/
 
 ## 2026-10-11 独立新版 SDK 实验
 
-使用单独下载并校验 SHA-256 的 Dart 3.13.5，在独立工程验证 `libavif 0.1.1`；主应用仍固定 Flutter 3.41.4 / Dart 3.11.4。工程模板、Dart 依赖锁和 Windows 构建实验补丁见 [探测工具](../../tool/avif_candidate_probe/README.md)。
+使用单独下载并校验 SHA-256 的 Dart 3.13.5，在独立工程验证 `libavif 0.1.1`；主应用仍固定 Flutter 3.41.4 / Dart 3.11.4。工程模板与依赖锁已随实验结束后移除。
 
 来源校验：pub.dev 的 `libavif 0.1.1` 归档 SHA-256 为 `e96c31379cd472786133085ec18b977c79d3965a1a339bf283447e7b85955268`；`flutter_libavif 0.1.1` 为 `94954d197390dda27afced5a6c4d6e8e38f5e23bc1aeca19003237d32d40a757`。本轮实际运行的是底层 Dart 解码库，Flutter adapter 仅完成源码检查。
 

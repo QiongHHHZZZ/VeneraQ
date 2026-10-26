@@ -31,7 +31,7 @@ jobs:
           changed_files="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" --)"
           printf '%s\n' "$changed_files"
           if printf '%s\n' "$changed_files" | grep -Eq \
-            '^(lib/|packages/|assets/|android/|apple/|windows/|ios/|macos/|linux/|debian/|patch/|\.github/workflows/|\.github/scripts/|pubspec\.yaml$|pubspec\.lock$|rust-toolchain\.toml$|analysis_options\.yaml$)'; then
+            '^(lib/|packages/|assets/|android/|\.github/workflows/|\.github/scripts/|pubspec\.yaml$|pubspec\.lock$|rust-toolchain\.toml$|analysis_options\.yaml$)'; then
             echo "platform=true" >> "$GITHUB_OUTPUT"
           else
             echo "platform=false" >> "$GITHUB_OUTPUT"
@@ -86,47 +86,9 @@ jobs:
       - run: flutter pub get --enforce-lockfile
       - name: 构建 Android Debug APK
         run: flutter build apk --debug --target-platform android-arm64
-
-  windows:
-    name: Windows 冒烟构建
-    needs: changes
-    if: ${{ needs.changes.outputs.platform == 'true' }}
-    runs-on: windows-2025
-    timeout-minutes: 35
-    steps:
-      - uses: actions/checkout@v7
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          flutter-version-file: pubspec.yaml
-          architecture: x64
-          cache: true
-      - run: flutter pub get --enforce-lockfile
-      - name: 构建 Windows Debug 应用
-        run: flutter build windows --debug
-      - name: 编译并运行 Windows 原生启动测试
-        shell: pwsh
-        run: |
-          $PSNativeCommandUseErrorActionPreference = $true
-          cmake -S windows/tests -B build/windows/startup_tests -A x64
-          cmake --build build/windows/startup_tests --config Debug
-          ctest --test-dir build/windows/startup_tests -C Debug --output-on-failure
-      - name: 验证 Windows 首次启动、重复启动和失败诊断
-        shell: pwsh
-        timeout-minutes: 5
-        run: ./.github/scripts/test_windows_startup.ps1 -Application build/windows/x64/runner/Debug/VeneraNext.exe
-      - name: 上传 Windows 启动诊断
-        if: ${{ always() }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: windows-pr-startup-logs
-          path: build/windows/startup-smoke/**/*.log
-          if-no-files-found: ignore
-          retention-days: 7
-
   platform_gate:
     name: 平台冒烟构建门禁
-    needs: [changes, android, windows]
+    needs: [changes, android]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -135,12 +97,10 @@ jobs:
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
           ANDROID_RESULT: ${{ needs.android.result }}
-          WINDOWS_RESULT: ${{ needs.windows.result }}
         run: |
           if [[ "$CHANGES_RESULT" != "success" || \
-                ("$ANDROID_RESULT" != "success" && "$ANDROID_RESULT" != "skipped") || \
-                ("$WINDOWS_RESULT" != "success" && "$WINDOWS_RESULT" != "skipped") ]]; then
-            echo "平台冒烟构建未通过：changes=$CHANGES_RESULT android=$ANDROID_RESULT windows=$WINDOWS_RESULT"
+                ("$ANDROID_RESULT" != "success" && "$ANDROID_RESULT" != "skipped") ]]; then
+            echo "平台冒烟构建未通过：changes=$CHANGES_RESULT android=$ANDROID_RESULT"
             exit 1
           fi
-          echo "平台冒烟构建通过：Android=$ANDROID_RESULT Windows=$WINDOWS_RESULT"
+          echo "平台冒烟构建通过：Android=$ANDROID_RESULT"

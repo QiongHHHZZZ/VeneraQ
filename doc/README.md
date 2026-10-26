@@ -1,48 +1,37 @@
 # 文档索引
 
-English index: [README.en.md](README.en.md)
-
-本文档是 `doc/` 目录的默认中文入口。新增文档时优先按类型放入子目录，并使用 `topic.zh.md` / `topic.en.md` 维护语言版本。`experiments/` 目录例外，实验设计和任务跟踪文档只要求中文。
+本文档是 `doc/` 目录的入口。新增文档时按类型放入子目录，统一使用 `topic.zh.md` 命名。
 
 ## 目录约定
 
-| 目录 | 类型 | 语言约定 |
-|---|---|---|
-| `api/` | 开发 API、扩展接口、脚本接口 | 中英文双版本 |
-| `examples/` | 配套代码模板 | 中英文指南共用，接口说明在指南中维护 |
-| `development/` | 本地开发、构建、测试和开发故障排查 | 中英文双版本，中文为默认维护入口 |
-| `distribution/` | 发布、分发、包管理器和工作流维护 | 中英文双版本，中文为默认维护入口 |
-| `user/` | 用户使用说明、导入格式、命令行用法 | 中英文双版本 |
-| `experiments/` | 实验设计、任务跟踪、技术预研 | 中文即可，不作为正式路线图承诺 |
+| 目录 | 类型 |
+|---|---|
+| `api/` | 开发 API、扩展接口、脚本接口 |
+| `architecture/` | 结构评估、依赖清单 |
+| `examples/` | 配套代码模板 |
+| `development/` | 本地开发、构建和开发故障排查 |
+| `user/` | 用户使用说明、导入格式、命令行用法 |
+| `experiments/` | 实验设计、任务跟踪、技术预研；不作为正式路线图承诺 |
 
 ## 开发 API
 
 第三方源开发者建议按“[编写指南](api/comic_source.zh.md) → [最小模板](examples/minimal_source.js) → [API 参考](api/js.zh.md) → [本地调试](development/source_debugging.zh.md) → [发布脚本与源仓库](api/comic_source.zh.md#7-发布脚本与源仓库)”阅读。
 
-- [漫画源开发说明](api/comic_source.zh.md) / [Comic Source Guide](api/comic_source.en.md)
-- [JavaScript API](api/js.zh.md) / [JavaScript API](api/js.en.md)
+- [漫画源开发说明](api/comic_source.zh.md)
+- [JavaScript API](api/js.zh.md)
 
 ## 开发和构建
 
-- [构建与开发](development/build.zh.md) / [Build and Development](development/build.en.md)
-- [漫画源本地调试](development/source_debugging.zh.md) / [Local Source Debugging](development/source_debugging.en.md)
-- [磁盘日志](development/logging.zh.md) / [Disk logs](development/logging.en.md)
-- [依赖治理](development/dependencies.zh.md) / [Dependency Governance](development/dependencies.en.md)
-
-## 分发和发布
-
-- [Windows 分发](distribution/windows.zh.md) / [Windows Distribution](distribution/windows.en.md)
-- [Linux 安装与分发](distribution/linux.zh.md) / [Linux Installation and Distribution](distribution/linux.en.md)
+- [构建与开发](development/build.zh.md)
+- [漫画源本地调试](development/source_debugging.zh.md)
+- [磁盘日志](development/logging.zh.md)
+- [依赖治理](development/dependencies.zh.md)
+- [图标替换](development/app-icon.zh.md)
 
 ## 用户和命令行
 
-- [应用数据同步](user/data_sync.zh.md) / [App-data synchronization](user/data_sync.en.md)
-- [自动选择阅读模式](user/automatic_reader_mode.zh.md) / [Automatic Reader Mode](user/automatic_reader_mode.en.md)
-- [自动阅读与不可用图片处理](user/automatic_reading.zh.md)
-- [条漫左右边距](user/reader_width.zh.md) / [Reader side margins](user/reader_width.en.md)
-- [漫画源与源仓库](user/source_repositories.zh.md) / [Source repositories](user/source_repositories.en.md)
-- [本地漫画导入](user/import_comic.zh.md) / [Import Comic](user/import_comic.en.md)
-- [无头命令模式](user/headless.zh.md) / [Headless Mode](user/headless.en.md)
+- [漫画源与源仓库](user/source_repositories.zh.md)
+- [无头命令模式](user/headless.zh.md)
 
 ## 实验和任务跟踪
 
@@ -55,7 +44,6 @@ English index: [README.en.md](README.en.md)
 ## 维护原则
 
 - README 只保留用户最需要的入口，不承载长篇开发文档。
-- 除 `experiments/` 外，新增文档应同时提供中文和英文版本。
-- 中文文档是默认入口；当中英文内容无法完全同步时，应优先保证中文版本完整准确。
+- 文档统一使用中文，文件名以 `.zh.md` 结尾。
 - `experiments/` 文档用于记录判断、风险和任务，不在功能稳定前写进 README 的功能宣传。
 - 源相关文档只描述扩展接口和运行时契约，不提供、推荐、维护或验证任何第三方漫画源。

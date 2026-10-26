@@ -91,7 +91,7 @@ def _request_json(
 ) -> object:
     request_headers = {
         "Accept": "application/vnd.github+json",
-        "User-Agent": "VeneraNext-GitHub-Actions",
+        "User-Agent": "VeneraQ-GitHub-Actions",
         **(headers or {}),
     }
     data = None

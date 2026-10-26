@@ -1,8 +1,6 @@
 # 依赖治理
 
-English version: [dependencies.en.md](dependencies.en.md)
-
-本文记录 VeneraNext 的直接依赖治理规则，重点说明不来自 pub.dev 的 Git 依赖。`pubspec.lock` 是构建复现依据，但不能替代依赖来源和维护责任说明。
+本文记录 VeneraQ 的直接依赖治理规则，重点说明不来自 pub.dev 的 Git 依赖。`pubspec.lock` 是构建复现依据，但不能替代依赖来源和维护责任说明。
 
 ## 基本规则
 
@@ -17,9 +15,9 @@ English version: [dependencies.en.md](dependencies.en.md)
 
 ## 当前 Git 依赖
 
-2026-09-28：`flutter_qjs`、`photo_view`、`flutter.widgets`、`flutter_inappwebview` 和 `webdav_client` 曾改用 `CyrilPeng` 下的现有 fork，固定 commit 不变。`flutter_inappwebview` 的六个平台子包通过仓库内相对路径一起解析到同一 fork。该阶段只迁移来源，不升级版本。2026-10-05 起，`photo_view` 改为下文记录的本地 path 包，不再列入当前 Git 清单；回滚时同步恢复依赖声明、锁文件和对应清单记录。
+2026-09-28：`flutter_qjs`、`photo_view`、`flutter.widgets`、`flutter_inappwebview` 曾改用 `CyrilPeng` 下的现有 fork，固定 commit 不变。`flutter_inappwebview` 的六个平台子包通过仓库内相对路径一起解析到同一 fork。该阶段只迁移来源，不升级版本。2026-10-05 起，`photo_view` 改为下文记录的本地 path 包，不再列入当前 Git 清单；回滚时同步恢复依赖声明、锁文件和对应清单记录。
 
-这些 fork 的补丁选择、上游审查和更新验证由 VeneraNext 维护者负责。保留原作者版权和许可证；镜像不能替代持续维护，也不能解决许可证缺失。
+这些 fork 的补丁选择、上游审查和更新验证由 VeneraQ 维护者负责。保留原作者版权和许可证；镜像不能替代持续维护，也不能解决许可证缺失。
 
 | 依赖 | 当前 commit | 上游 / 许可证 | 暂时保留定制仓库的直接原因 |
 |---|---|---|---|
@@ -28,13 +26,11 @@ English version: [dependencies.en.md](dependencies.en.md)
 | `desktop_webview_window` | `7801fc582ecf5a7351632887891ecf309a7b2583` | `wgh136/flutter_desktop_webview` / 未声明 | 固定版本包含 Windows ARM64 构建修复，替换前需验证全部桌面平台 |
 | `flutter_inappwebview` | `3ef899b3db57c911b080979f1392253b835f98ab` | `pichillilorenzo/flutter_inappwebview` / Apache-2.0 | 固定版本包含 `GraphicsContext` 释放修复；内嵌 WebView 和 Cloudflare 流程依赖该分支行为 |
 | `lodepng_flutter` | `ac7d05dde32e8d728102a9ff66e6b55f05d94ba1` | 未记录 fork 上游 / 许可证文件仍为占位内容 | 固定版本包含 NDK r28 构建适配，图片处理链路仍依赖其原生插件 |
-| `webdav_client` | `2f669c98fb81cff1c64fee93466a1475c77e4273` | `wgh136/webdav_client` / BSD-3-Clause | 固定版本增加多种认证方式支持，WebDAV 阅读和备份依赖该兼容性 |
 | `flutter_saf` | `fe182cdf40e5fa6230f451bc1d643b860f610d13` | `pkuislm/flutter_saf` / 许可证文件仍为占位内容 | 固定版本关闭代码压缩以规避 Android 发布构建问题，存储访问流程依赖该插件 |
-| `flutter_7zip` | `b33344797f1d2469339e0e1b75f5f954f1da224c` | `wgh136/flutter_7zip` / 许可证文件仍为占位内容 | 固定版本修复编译错误，CBZ 和归档兼容回退链路依赖该插件 |
 
 上表依据当前固定 commit 的提交说明记录“为什么现在不能直接切回上游”，不等同于完整差异审计。每次升级 Git 依赖时，应在 PR 中补充上游仓库、对比范围、全部定制修改、上游 PR（如有）、安全影响和回滚方式。
 
-`desktop_webview_window` 未声明许可证，`lodepng_flutter`、`flutter_saf` 和 `flutter_7zip` 的许可证文件仍是占位内容。这些是已知供应链债务：升级前必须向维护方核实许可证，无法确认时应迁移到许可证清晰的上游版本或替代包。
+`desktop_webview_window` 未声明许可证，`lodepng_flutter` 和 `flutter_saf` 的许可证文件仍是占位内容。这些是已知供应链债务：升级前必须向维护方核实许可证，无法确认时应迁移到许可证清晰的上游版本或替代包。
 
 ## 本地维护的 PhotoView
 

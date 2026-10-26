@@ -14,10 +14,7 @@ PNG 编码读取 `Uint32List` 子视图的有效偏移和长度，将结果复�
 
 环境：Windows x64、Flutter 3.41.4、Dart 3.11.4。使用生产 `Image` 类的复制代码生成独立 Dart AOT 程序，1600×2400 像素、16 个水平条带逆序复制。每次运行预热 5 遍、计时 100 遍，重复运行 5 次；计时后逐一校验全部像素并计算校验和。
 
-```powershell
-python tool/benchmark_image_copy.py --revision 35555ab --runs 5
-python tool/benchmark_image_copy.py --runs 5
-```
+> 当时使用的基准脚本 `tool/benchmark_image_copy.py` 已随 `tool/` 清理删除，下表保留测量结果。
 
 | 实现 | 每张复制耗时中位数 | 全图校验和 |
 |---|---:|---:|
@@ -34,12 +31,9 @@ python tool/benchmark_image_copy.py --runs 5
 
 ## 2026-10-11 分阶段宿主测量
 
-新增 `tool/image_pipeline_probe.dart`，使用生产图片解码、QuickJS、PNG 编码及 `modifyImageWithScript` 路径。两个固定的合成样本均为 1600×2400、16 条带逆序；每种预热一次、记录三次，验证所有输出像素，并核对插桩路径与生产路径的 PNG 字节完全一致。
+曾用 `tool/image_pipeline_probe.dart` 做分阶段测量：走生产图片解码、QuickJS、PNG 编码及 `modifyImageWithScript` 路径。两个固定的合成样本均为 1600×2400、16 条带逆序；每种预热一次、记录三次，验证所有输出像素，并核对插桩路径与生产路径的 PNG 字节完全一致。
 
-```powershell
-$env:PATH = (Join-Path (Get-Location) 'build/windows/x64/runner/Release') + ';' + $env:PATH
-flutter test --no-pub tool/image_pipeline_probe.dart
-```
+> 该探针已随 `tool/` 清理删除，下表保留测量结果。
 
 Windows x64，Flutter 3.41.4 / Dart 3.11.4。中位数如下，单位为 ms：
 

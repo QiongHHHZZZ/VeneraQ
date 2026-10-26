@@ -32,10 +32,6 @@ body:
       multiple: true
       options:
         - Android
-        - iOS
-        - Windows
-        - macOS
-        - linux
         - other
     validations:
       required: false

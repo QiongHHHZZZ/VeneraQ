@@ -1,7 +1,5 @@
 # VeneraNext 无头命令模式
 
-英文版本：[headless.en.md](headless.en.md)
-
 VeneraNext 的无头命令模式允许从命令行运行部分关键功能，适合自动化任务或与其他工具集成。本文档说明当前可用命令和输出格式。
 
 ## 使用方式
@@ -19,19 +17,6 @@ venera-next --headless <command> [subcommand] [options]
 - **`--ignore-disheadless-log`**：抑制日志输出，使脚本解析输出时更干净。
 
 ## 命令
-
-### `webdav`
-
-管理 WebDAV 数据同步。
-
-- **`webdav up`**：上传本地配置到 WebDAV 服务器。
-- **`webdav down`**：下载并应用 WebDAV 服务器上的远端配置。
-
-**示例：**
-
-```bash
-venera-next --headless webdav up
-```
 
 ### `updatescript`
 

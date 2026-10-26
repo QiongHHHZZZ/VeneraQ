@@ -29,7 +29,6 @@ class StructureImportsTest(unittest.TestCase):
             }
             source.write_text('''
                 import 'package:venera_next/features/history/history_image_provider.dart';
-                import 'package:venera_next/features/history/image_favorites_provider.dart';
                 import 'package:venera_next/features/local_comics/download.dart';
                 import 'package:venera_next/features/history/history_api.dart';
             ''', encoding='utf-8')
@@ -44,11 +43,11 @@ class StructureImportsTest(unittest.TestCase):
                     'lib/app_runtime/owner.dart -> lib/features/comic_details/comic_page.dart '
                     '(use lib/features/comic_details/comic_details.dart)'})
                 source.write_text(
-                    "import 'package:venera_next/features/history/image_favorites_models.dart';",
+                    "import 'package:venera_next/features/history/history_page.dart';",
                     encoding='utf-8')
                 self.assertEqual(MODULE._scan_feature_entrypoint_violations(), {
-                    'lib/app_runtime/owner.dart -> lib/features/history/image_favorites_models.dart '
-                    '(use lib/features/history/history_api.dart)'})
+                    'lib/app_runtime/owner.dart -> lib/features/history/history_page.dart '
+                    '(use lib/features/history/history.dart)'})
 
     def test_structure_boundaries_are_clean(self):
         self.assertEqual(MODULE._scan_restricted_imports(), set())
