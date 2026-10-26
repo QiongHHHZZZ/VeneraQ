@@ -29,12 +29,11 @@ jobs:
     name: Rhttp 依赖安全公告
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    # Advisory only. The local rhttp carries a callback-drain patch that the
-    # published package does not, so it cannot be swapped for the pub.dev
-    # release to inherit upstream's dependency bumps. Failing the build here
-    # would leave every push red for advisories this repository cannot fix
-    # without forking the patch forward; the report is uploaded instead.
-    continue-on-error: true
+    # Reporting only, and green either way. The local rhttp carries a
+    # callback-drain patch the published package does not, so swapping it for the
+    # pub.dev release to inherit upstream's dependency bumps is not an option.
+    # An advisory this fork cannot address must not colour the run red, or the
+    # signal that a push is broken gets lost in noise.
     steps:
       - uses: actions/checkout@v7
       - name: 安装固定版本的审计工具
@@ -42,8 +41,21 @@ jobs:
       - name: 扫描锁定的 Rust 依赖
         run: |
           mkdir -p build/security
+          # `|| true`: the step records what cargo audit found, not whether it
+          # exited non-zero. The log is the output that matters.
           cargo audit --file packages/rhttp/rust/Cargo.lock \
-            2>&1 | tee build/security/rust-audit.log
+            2>&1 | tee build/security/rust-audit.log || true
+      - name: 摘要写入运行页面
+        run: |
+          {
+            echo '### Rust 依赖安全公告'
+            echo
+            echo '仅报告，不阻断构建。完整日志见 rust-dependency-audit 附件。'
+            echo
+            echo '```'
+            tail -n 40 build/security/rust-audit.log || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: 保留审计结果
         if: ${{ always() }}
         uses: actions/upload-artifact@v7

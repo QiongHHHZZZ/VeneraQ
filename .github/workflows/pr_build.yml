@@ -66,7 +66,7 @@ jobs:
             android/**/*.gradle*
             android/gradle/wrapper/gradle-wrapper.properties
             pubspec.lock
-      - name: 准备临时 Android Debug 签名
+      - name: 准备临时 Android 签名
         run: |
           keytool -genkeypair -noprompt \
             -keystore android/debug.keystore \
@@ -84,8 +84,11 @@ jobs:
             'storeFile=../debug.keystore' \
             > android/key.properties
       - run: flutter pub get --enforce-lockfile
-      - name: 构建 Android Debug APK
-        run: flutter build apk --debug --target-platform android-arm64
+      # Release, not debug: this repository produces no debug APK. A debug build
+      # costs twice as long and makes cargokit compile an android-x86 Rust target
+      # that never ships, so the smoke build verifies what is actually released.
+      - name: 构建 Android Release APK
+        run: flutter build apk --release --no-pub --target-platform android-arm64
   platform_gate:
     name: 平台冒烟构建门禁
     needs: [changes, android]
