@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Dark-mode launch ground, matching the dark variant of the Flutter
+         launch animation. -->
+    <color name="splash_background">#1B1228</color>
+    <color name="splash_gradient_top">#1B1228</color>
+    <color name="splash_gradient_bottom">#08050E</color>
+</resources>

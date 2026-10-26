@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Launch theme for API 31+, where the system draws the splash screen
+         instead of the app window.
+         windowSplashScreenAnimatedIcon is set to a transparent drawable on
+         purpose: leaving it unset makes the platform substitute the application
+         icon, which showed the launcher star as a first frame before the
+         Flutter launch animation could start. -->
+    <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">
+        <item name="android:windowBackground">@drawable/launch_background</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:windowSplashScreenBackground">@color/splash_background</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_empty_icon</item>
+    </style>
+    <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
+        <!-- Same value as the base variant. On API 31+ this file wins over
+             values/styles.xml, so leaving the platform default here would
+             reintroduce the white flash it was changed to avoid. -->
+        <item name="android:windowBackground">@color/splash_background</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+</resources>
+

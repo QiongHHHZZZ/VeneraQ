@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Launch ground, matching the Flutter launch animation's first frame so
+         the hand-off has no colour jump. Kept well away from white: a ground
+         above ~90% of white's luminance reads as a white flash on a phone. -->
+    <color name="splash_background">#DCCEF2</color>
+    <color name="splash_gradient_top">#DCCEF2</color>
+    <color name="splash_gradient_bottom">#B79BD9</color>
+</resources>
