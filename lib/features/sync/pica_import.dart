@@ -1,11 +1,7 @@
-import 'package:venera_next/foundation/global_preference_store.dart';
-import 'package:venera_next/foundation/application_preferences.dart';
 import 'pica_import_storage.dart';
 import 'package:venera_next/features/comic_source/comic_source_api.dart';
 import 'package:venera_next/features/favorites/favorites_manager.dart';
 import 'package:venera_next/features/history/history_manager.dart';
-import 'package:venera_next/features/history/image_favorites.dart';
-import 'package:venera_next/foundation/appdata.dart';
 import 'package:venera_next/foundation/file_system.dart';
 import 'package:venera_next/foundation/log.dart';
 import 'app_data_archive.dart';
@@ -42,10 +38,7 @@ Future<void> importLegacyPicaArchive(
           favoritesPath: favorites.databasePath,
           historyPath: historyPath,
           appendFavorites:
-              GlobalPreferenceStore(
-                appdata.settings,
-              ).read(FavoritePreferences.newFavoriteAddTo) ==
-              'end',
+              true,
           translateTags: (tags) => tags
               .map((tag) => (tag, tag.translateTagsToCN))
               .where((pair) => pair.$1 != pair.$2)
@@ -59,7 +52,6 @@ Future<void> importLegacyPicaArchive(
         if (data.folders.isNotEmpty || data.links.isNotEmpty) {
           favorites.notifyImportedFavorites(data.folders.keys);
         }
-        if (data.images.isNotEmpty) ImageFavoriteManager().notifyChanges();
       },
     );
   } finally {

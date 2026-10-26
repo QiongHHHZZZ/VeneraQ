@@ -89,7 +89,6 @@ class SwitchSetting extends StatefulWidget {
     this.subtitle,
     this.comicId,
     this.comicSource,
-    this.useDeviceSettings = false,
   });
 
   factory SwitchSetting.preference({
@@ -114,7 +113,6 @@ class SwitchSetting extends StatefulWidget {
     VoidCallback? onChanged,
     String? comicId,
     String? comicSource,
-    bool useDeviceSettings = false,
     String? subtitle,
   }) => SwitchSetting(
     key: key,
@@ -124,7 +122,6 @@ class SwitchSetting extends StatefulWidget {
     onChanged: onChanged,
     comicId: comicId,
     comicSource: comicSource,
-    useDeviceSettings: useDeviceSettings,
     subtitle: subtitle,
   );
 
@@ -141,9 +138,6 @@ class SwitchSetting extends StatefulWidget {
   final String? comicId;
 
   final String? comicSource;
-
-  final bool useDeviceSettings;
-
   @override
   State<SwitchSetting> createState() => _SwitchSettingState();
 }
@@ -155,7 +149,6 @@ class _SwitchSettingState extends _SettingState<SwitchSetting, bool> {
     preference: widget.preference,
     comicId: widget.comicId,
     sourceKey: widget.comicSource,
-    useDeviceSettings: widget.useDeviceSettings,
   );
   @override
   VoidCallback? get onSaved => widget.onChanged;
@@ -186,7 +179,6 @@ class SelectSetting extends StatelessWidget {
     this.help,
     this.comicId,
     this.comicSource,
-    this.useDeviceSettings = false,
   });
 
   factory SelectSetting.preference({
@@ -213,7 +205,6 @@ class SelectSetting extends StatelessWidget {
     VoidCallback? onChanged,
     String? comicId,
     String? comicSource,
-    bool useDeviceSettings = false,
     required Map<String, String> optionTranslation,
     String? help,
   }) => SelectSetting(
@@ -224,7 +215,6 @@ class SelectSetting extends StatelessWidget {
     onChanged: onChanged,
     comicId: comicId,
     comicSource: comicSource,
-    useDeviceSettings: useDeviceSettings,
     optionTranslation: optionTranslation,
     help: help,
   );
@@ -244,9 +234,6 @@ class SelectSetting extends StatelessWidget {
   final String? comicId;
 
   final String? comicSource;
-
-  final bool useDeviceSettings;
-
   @override
   Widget build(BuildContext context) {
     return SizedBox(
@@ -263,7 +250,6 @@ class SelectSetting extends StatelessWidget {
               help: help,
               comicId: comicId,
               comicSource: comicSource,
-              useDeviceSettings: useDeviceSettings,
             );
           } else {
             return _EndSelectorSelectSetting(
@@ -275,7 +261,6 @@ class SelectSetting extends StatelessWidget {
               help: help,
               comicId: comicId,
               comicSource: comicSource,
-              useDeviceSettings: useDeviceSettings,
             );
           }
         },
@@ -294,7 +279,6 @@ class _DoubleLineSelectSettings extends StatefulWidget {
     this.help,
     this.comicId,
     this.comicSource,
-    this.useDeviceSettings = false,
   });
 
   final Preference<String?>? preference;
@@ -312,9 +296,6 @@ class _DoubleLineSelectSettings extends StatefulWidget {
   final String? comicId;
 
   final String? comicSource;
-
-  final bool useDeviceSettings;
-
   @override
   State<_DoubleLineSelectSettings> createState() =>
       _DoubleLineSelectSettingsState();
@@ -328,7 +309,6 @@ class _DoubleLineSelectSettingsState
     preference: widget.preference,
     comicId: widget.comicId,
     sourceKey: widget.comicSource,
-    useDeviceSettings: widget.useDeviceSettings,
   );
   @override
   VoidCallback? get onSaved => widget.onChanged;
@@ -421,7 +401,6 @@ class _EndSelectorSelectSetting extends StatefulWidget {
     this.help,
     this.comicId,
     this.comicSource,
-    this.useDeviceSettings = false,
   });
 
   final Preference<String?>? preference;
@@ -439,9 +418,6 @@ class _EndSelectorSelectSetting extends StatefulWidget {
   final String? comicId;
 
   final String? comicSource;
-
-  final bool useDeviceSettings;
-
   @override
   State<_EndSelectorSelectSetting> createState() =>
       _EndSelectorSelectSettingState();
@@ -455,7 +431,6 @@ class _EndSelectorSelectSettingState
     preference: widget.preference,
     comicId: widget.comicId,
     sourceKey: widget.comicSource,
-    useDeviceSettings: widget.useDeviceSettings,
   );
   @override
   VoidCallback? get onSaved => widget.onChanged;
@@ -520,119 +495,94 @@ class _EndSelectorSelectSettingState
   }
 }
 
-class SliderSetting extends StatefulWidget {
-  const SliderSetting({
+/// A numeric setting chosen from a short list instead of a slider.
+///
+/// A slider reserves a whole extra row for its track and cannot label its
+/// choices, which makes a page of them much taller than it needs to be. These
+/// settings only ever take a handful of values, so a menu row says more in one
+/// line.
+class ChoiceNumberSetting extends StatefulWidget {
+  const ChoiceNumberSetting({
     super.key,
     required this.title,
-    this.preference,
-    required this.settingsIndex,
-    required this.interval,
-    required this.min,
-    required this.max,
+    required this.preference,
     this.onChanged,
     this.comicId,
     this.comicSource,
-    this.useDeviceSettings = false,
     this.valueFormatter,
   });
 
-  factory SliderSetting.preference({
-    Key? key,
-    required String title,
-    required NumericPreference preference,
-    VoidCallback? onChanged,
-    String Function(double)? valueFormatter,
-  }) => SliderSetting(
-    key: key,
-    title: title,
-    settingsIndex: preference.key,
-    preference: preference,
-    onChanged: onChanged,
-    valueFormatter: valueFormatter,
-    interval: preference.step,
-    min: preference.min,
-    max: preference.max,
-  );
-
-  factory SliderSetting.reader({
-    Key? key,
-    required String title,
-    required NumericPreference preference,
-    VoidCallback? onChanged,
-    String? comicId,
-    String? comicSource,
-    bool useDeviceSettings = false,
-    String Function(double)? valueFormatter,
-  }) => SliderSetting(
-    key: key,
-    title: title,
-    settingsIndex: preference.key,
-    preference: preference,
-    onChanged: onChanged,
-    comicId: comicId,
-    comicSource: comicSource,
-    useDeviceSettings: useDeviceSettings,
-    valueFormatter: valueFormatter,
-    interval: preference.step,
-    min: preference.min,
-    max: preference.max,
-  );
-
-  final Preference<num>? preference;
-
   final String title;
-
-  final String settingsIndex;
-
-  final double interval;
-
-  final double min;
-
-  final double max;
-
+  final NumericPreference preference;
   final VoidCallback? onChanged;
-
   final String? comicId;
-
   final String? comicSource;
-
-  final bool useDeviceSettings;
-
-  final String Function(double value)? valueFormatter;
+  final String Function(int value)? valueFormatter;
 
   @override
-  State<SliderSetting> createState() => _SliderSettingState();
+  State<ChoiceNumberSetting> createState() => _ChoiceNumberSettingState();
 }
 
-class _SliderSettingState extends _SettingState<SliderSetting, num> {
+class _ChoiceNumberSettingState
+    extends _SettingState<ChoiceNumberSetting, num> {
   @override
   SettingField<num> get field => SettingField.reader(
-    key: widget.settingsIndex,
+    key: widget.preference.key,
     preference: widget.preference,
     comicId: widget.comicId,
     sourceKey: widget.comicSource,
-    useDeviceSettings: widget.useDeviceSettings,
   );
+
   @override
   VoidCallback? get onSaved => widget.onChanged;
 
+  String _label(int value) =>
+      widget.valueFormatter?.call(value) ?? value.toString();
+
   @override
   Widget build(BuildContext context) {
-    final value = currentValue!.toDouble();
+    final preference = widget.preference;
+    final value = currentValue!.round();
+    final values = <int>[
+      for (
+        var candidate = preference.min.round();
+        candidate <= preference.max.round();
+        candidate += preference.step.round().clamp(1, 1 << 20)
+      )
+        candidate,
+    ];
     return withSaveStatus(
       ListTile(
         title: Text(widget.title, softWrap: true, maxLines: 2),
-        trailing: Text(
-          widget.valueFormatter?.call(value) ?? value.toString(),
-          style: ts.s12,
-        ),
-        subtitle: Slider(
-          value: value,
-          onChanged: change,
-          divisions: ((widget.max - widget.min) / widget.interval).toInt(),
-          min: widget.min,
-          max: widget.max,
-        ),
+        trailing: Text(_label(value), style: ts.s12),
+        onTap: () {
+          final box = context.findRenderObject() as RenderBox?;
+          final overlay =
+              Overlay.of(context).context.findRenderObject() as RenderBox?;
+          if (box == null || overlay == null) return;
+          final origin = box.localToGlobal(Offset.zero, ancestor: overlay);
+          showMenu<int>(
+            context: context,
+            position: RelativeRect.fromRect(
+              Rect.fromLTWH(
+                origin.dx,
+                origin.dy,
+                box.size.width,
+                box.size.height,
+              ),
+              Offset.zero & overlay.size,
+            ),
+            items: [
+              for (final option in values)
+                PopupMenuItem<int>(
+                  value: option,
+                  child: Text(_label(option)),
+                ),
+            ],
+          ).then((picked) {
+            if (picked != null && picked != value) change(picked);
+          });
+        },
       ),
     );
   }
@@ -926,7 +876,16 @@ class SettingPartTitle extends StatelessWidget {
           children: [
             Icon(icon, size: 24),
             const SizedBox(width: 8),
-            Text(title, style: ts.s18),
+            // Callers pass translation keys, so the heading must be localized
+            // here; otherwise a Chinese UI shows the raw English section name.
+            Expanded(
+              child: Text(
+                title.tl,
+                style: ts.s18,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
           ],
         ),
       ),

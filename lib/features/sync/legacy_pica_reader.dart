@@ -96,9 +96,19 @@ class LegacyPicaReader {
     }
   }
 
+  /// True when [table] exists in this database, so the reader can tolerate
+  /// older or newer schemas instead of failing the whole import.
+  bool _hasTable(String table) => db.select(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?;",
+    [table],
+  ).isNotEmpty;
+
   Iterable<LegacyPicaImage> images({
     required bool Function(String) sourceAvailable,
   }) sync* {
+    // The image-favorites table is gone from current databases; an archive
+    // written before that still imports, it just contributes no images.
+    if (!_hasTable('image_favorites')) return;
     for (final row in db.select('SELECT * FROM image_favorites;')) {
       final key = row['id'] as String;
       final separator = key.indexOf('-');

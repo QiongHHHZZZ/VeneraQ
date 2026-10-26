@@ -1,3 +1,4 @@
+import 'package:venera_next/features/local_comics/download_network_guard.dart';
 import 'package:venera_next/foundation/proxy_configuration.dart';
 import 'package:venera_next/foundation/application_preferences.dart';
 import 'package:venera_next/foundation/global_preference_store.dart';
@@ -36,9 +37,20 @@ class _NetworkSettingsState extends State<NetworkSettings> {
           title: "DNS Overrides".tl,
           builder: () => const _DNSOverrides(),
         ).toSliver(),
-        SliderSetting.preference(
+        ChoiceNumberSetting(
           title: "Download Threads".tl,
           preference: NetworkPreferences.downloadThreads,
+        ).toSliver(),
+        ChoiceNumberSetting(
+          title: "Number of images preloaded".tl,
+          preference: NetworkPreferences.preloadImageCount,
+        ).toSliver(),
+        SwitchSetting.preference(
+          title: "Download on WiFi Only".tl,
+          subtitle: "Pauses downloads on a metered connection and resumes them on WiFi."
+              .tl,
+          preference: NetworkPreferences.downloadWifiOnly,
+          onChanged: () => DownloadNetworkGuard.instance.onSettingChanged(),
         ).toSliver(),
       ],
     );

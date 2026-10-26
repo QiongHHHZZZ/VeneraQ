@@ -1,7 +1,5 @@
 import 'package:venera_next/features/favorites/favorites_scope.dart';
 import 'folder_name_validation.dart';
-import 'package:venera_next/foundation/global_preference_store.dart';
-import 'package:venera_next/foundation/application_preferences.dart';
 import 'network_favorite_import.dart';
 import 'network_favorite_import_dialog.dart';
 import 'favorite_models.dart';
@@ -21,7 +19,6 @@ import 'package:venera_next/foundation/app_data_operations.dart';
 import 'package:venera_next/foundation/app.dart';
 import 'package:venera_next/foundation/selection_operation.dart';
 import 'package:venera_next/foundation/log.dart';
-import 'package:venera_next/foundation/appdata.dart';
 import 'package:venera_next/foundation/comic_type.dart';
 import 'package:venera_next/foundation/context.dart';
 import 'package:venera_next/foundation/file_interaction.dart';
@@ -193,10 +190,23 @@ Future<void> _addFavorite(
       store.isCurrent &&
       manager.connectionGeneration == generation &&
       App.dataPath == dataPath;
-  String? selectedFolder = GlobalPreferenceStore(
-    appdata.settings,
-  ).read(FavoritePreferences.quickFavorite);
-  if (!folders.contains(selectedFolder)) selectedFolder = null;
+  // A single folder leaves nothing to choose, so the comic goes straight in
+  // instead of asking a question with one possible answer.
+  if (folders.length == 1) {
+    final folder = folders.single;
+    await AppDataOperations.instance.access(() async {
+      if (!currentDatabase() || !manager.existsFolder(folder)) {
+        throw const SelectionCancelled();
+      }
+      await manager.addComics(folder, items);
+    });
+    if (context.mounted) {
+      context.showMessage(message: 'Added to @folder'.tlParams({'folder': folder}));
+    }
+    return;
+  }
+  // Nothing is pre-selected: the quick-favorite folder is gone.
+  String? selectedFolder;
   await showAsyncConfirmDialog(
     context: context,
     title: 'Select a folder'.tl,

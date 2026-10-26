@@ -7,7 +7,6 @@ import 'package:flutter/material.dart';
 import 'package:venera_next/components/appbar.dart';
 import 'package:venera_next/components/loading.dart';
 import 'package:venera_next/components/navigation_bar.dart';
-import 'package:venera_next/components/pop_up_widget.dart';
 import 'package:venera_next/components/scroll.dart';
 import 'package:venera_next/features/comic_widgets/comic_widgets.dart';
 import 'package:venera_next/routing/app_navigation.dart';
@@ -17,13 +16,16 @@ import 'package:venera_next/features/comic_source/comic_source.dart';
 import 'package:venera_next/foundation/global_state.dart';
 import 'package:venera_next/foundation/res.dart';
 import 'package:venera_next/routing/page_jump_target.dart';
-import 'package:venera_next/routing/settings.dart';
 import 'package:venera_next/foundation/extensions.dart';
 import 'package:venera_next/foundation/translations.dart';
 import 'package:venera_next/foundation/widget_utils.dart';
 
 class ExplorePage extends StatefulWidget {
-  const ExplorePage({super.key});
+  const ExplorePage({super.key, this.sourceKey});
+
+  /// When set, only this source's explore pages are offered as tabs; the
+  /// discovery screen scopes browsing to the source the user picked.
+  final String? sourceKey;
 
   @override
   State<ExplorePage> createState() => _ExplorePageState();
@@ -39,18 +41,27 @@ class _ExplorePageState extends State<ExplorePage>
 
   late List<String> pages;
 
+  /// Explore page titles this instance may show, restricted to [sourceKey].
+  ///
+  /// Every page the source offers is listed: discovery is organised per source,
+  /// so a global page whitelist would only hide pages the chosen source has.
+  List<String> get _availableTitles {
+    final source = widget.sourceKey;
+    return [
+      for (final e in ComicSource.all())
+        if (source == null || e.key == source)
+          for (final page in e.explorePages) page.title,
+    ];
+  }
+
   void onSettingsChanged() {
-    var explorePages = GlobalPreferenceStore(
-      appdata.settings,
-    ).read(DiscoveryPreferences.explorePages);
-    var all = ComicSource.all()
-        .map((e) => e.explorePages)
-        .expand((e) => e.map((e) => e.title))
-        .toList();
-    explorePages = explorePages.where((e) => all.contains(e)).toList();
-    if (!pages.isEqualTo(explorePages)) {
+    final next = _availableTitles;
+    if (!pages.isEqualTo(next)) {
       setState(() {
-        pages = explorePages;
+        pages = next;
+        // Switching sources re-creates the controller; the old one must go, or
+        // every switch leaks a ticker.
+        controller.dispose();
         controller = TabController(length: pages.length, vsync: this);
       });
     }
@@ -64,26 +75,24 @@ class _ExplorePageState extends State<ExplorePage>
     }
   }
 
-  void addPage() {
-    showPopUpWidget(appNavigation.rootContext, setExplorePagesWidget());
-  }
-
   NaviPaneState? naviPane;
 
   @override
   void initState() {
-    pages = GlobalPreferenceStore(
-      appdata.settings,
-    ).read(DiscoveryPreferences.explorePages);
-    var all = ComicSource.all()
-        .map((e) => e.explorePages)
-        .expand((e) => e.map((e) => e.title))
-        .toList();
-    pages = pages.where((e) => all.contains(e)).toList();
+    pages = _availableTitles;
     controller = TabController(length: pages.length, vsync: this);
     appdata.settings.addListener(onSettingsChanged);
     NaviPane.of(context).addNaviItemTapListener(onNaviItemTapped);
     super.initState();
+  }
+
+  @override
+  void didUpdateWidget(ExplorePage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Switching the source in the discovery bar re-scopes the tabs.
+    if (oldWidget.sourceKey != widget.sourceKey) {
+      onSettingsChanged();
+    }
   }
 
   @override
@@ -126,21 +135,11 @@ class _ExplorePageState extends State<ExplorePage>
       Material(child: _SingleExplorePage(i, key: PageStorageKey(i)));
 
   Widget buildEmpty() {
-    var msg = "No Explore Pages".tl;
-    msg += '\n';
-    VoidCallback onTap;
-    if (ComicSource.isEmpty) {
-      msg += "Please add some sources".tl;
-      onTap = () {
-        context.to(() => ComicSourcePage());
-      };
-    } else {
-      msg += "Please check your settings".tl;
-      onTap = addPage;
-    }
+    // Every source is already listed by the discovery source selector, so the
+    // only way to have no pages here is having no sources at all.
     return NetworkError(
-      message: msg,
-      retry: onTap,
+      message: "${"No Explore Pages".tl}\n${"Please add some sources".tl}",
+      retry: () => context.to(() => ComicSourcePage()),
       withAppbar: false,
       buttonText: "Manage".tl,
     );
@@ -153,25 +152,23 @@ class _ExplorePageState extends State<ExplorePage>
       return buildEmpty();
     }
 
-    Widget tabBar = Material(
-      child: AppTabBar(
-        key: PageStorageKey(pages.toString()),
-        tabs: pages.map((e) => buildTab(e)).toList(),
-        controller: controller,
-        actionButton: TabActionButton(
-          icon: const Icon(Icons.add),
-          text: "Add".tl,
-          onPressed: addPage,
-        ),
-      ),
-    ).paddingTop(context.padding.top);
+    // A single page needs no tab strip: the source selector above already says
+    // which source this is, so a one-entry bar only repeats it.
+    final showTabs = pages.length > 1;
 
     return Stack(
       children: [
         Positioned.fill(
           child: Column(
             children: [
-              tabBar,
+              if (showTabs)
+                Material(
+                  child: AppTabBar(
+                    key: PageStorageKey(pages.toString()),
+                    tabs: pages.map((e) => buildTab(e)).toList(),
+                    controller: controller,
+                  ),
+                ).paddingTop(context.padding.top),
               Expanded(
                 child: NotificationListener<ScrollNotification>(
                   onNotification: (notifications) {

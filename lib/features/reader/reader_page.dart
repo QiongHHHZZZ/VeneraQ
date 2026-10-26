@@ -5,7 +5,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/services.dart';
-import 'package:flutter/scheduler.dart';
 import 'package:flutter_memory_info/flutter_memory_info.dart';
 import 'package:venera_next/components/message.dart';
 import 'package:venera_next/components/window_frame.dart';
@@ -15,12 +14,8 @@ import 'package:venera_next/features/history/history.dart';
 import 'package:venera_next/features/local_comics/local_comics.dart';
 import 'package:venera_next/features/reader/gesture_host.dart';
 import 'package:venera_next/features/reader/gesture_request.dart';
-import 'package:venera_next/features/reader/auto_reading.dart';
 import 'package:venera_next/features/reader/images_host.dart';
 import 'package:venera_next/features/reader/image_cache_policy.dart';
-import 'package:venera_next/features/reader/layout_detection.dart';
-import 'package:venera_next/features/reader/reader_mode_labels.dart';
-import 'package:venera_next/features/reader/reading_session.dart';
 import 'package:venera_next/features/reader/reader_session.dart';
 import 'package:venera_next/foundation/image_work.dart';
 import 'package:venera_next/foundation/selection_operation.dart';
@@ -29,13 +24,10 @@ import 'package:venera_next/features/reader/exit_guard.dart';
 import 'package:venera_next/features/reader/reader_controller.dart';
 import 'package:venera_next/features/reader/reader_viewport.dart';
 import 'package:venera_next/features/reader/page_order_migration.dart';
-import 'package:venera_next/features/reader/chapter_menu.dart';
 import 'chapter_loader.dart';
 import 'chapter_request.dart';
-import 'package:venera_next/features/reader/image_favorite_controller.dart';
 import 'package:venera_next/features/reader/image_export.dart';
 import 'package:venera_next/features/reader/settings_effects.dart';
-import 'package:venera_next/features/reader/comments_controller.dart';
 import 'package:venera_next/features/reader/chapter_navigation.dart';
 
 import 'package:venera_next/features/reader/page_layout.dart';
@@ -51,9 +43,7 @@ import 'package:venera_next/features/reader/platform_effects.dart';
 import 'package:venera_next/foundation/app.dart';
 import 'package:venera_next/foundation/appdata.dart';
 import 'package:venera_next/foundation/reader_settings.dart';
-import 'package:venera_next/foundation/reader_preferences.dart';
 import 'package:venera_next/foundation/comic_type.dart';
-import 'package:venera_next/foundation/comic_layout.dart';
 import 'package:venera_next/foundation/log.dart';
 import 'package:venera_next/foundation/translations.dart';
 import 'package:window_manager/window_manager.dart';
@@ -134,7 +124,6 @@ class Reader extends StatefulWidget {
 class ReaderState extends State<Reader>
     with ReaderImagePerPageHandler, WidgetsBindingObserver {
   final imageWork = ImageWork();
-  late final imageFavorites = HistoryScope.readImages(context);
   final _targetValidity = ValueNotifier(0);
   final _shellChanges = ValueNotifier(0);
   Listenable get shellChanges => _shellChanges;
@@ -162,27 +151,6 @@ class ReaderState extends State<Reader>
       images: currentImages,
       chapter: chapter,
     );
-  }
-
-  bool toggleAutomaticReading() {
-    if (!mounted || _stateDisposed || _sessionFrozen || _session.isHeld) {
-      return false;
-    }
-    autoReading.toggle();
-    return autoReading.isActive;
-  }
-
-  VoidCallback acquireAutomaticReadingPause() {
-    if (!mounted || _stateDisposed || _sessionFrozen) return () {};
-    final original = autoReading;
-    final reason = Object();
-    original.pause(reason, true);
-    var released = false;
-    return () {
-      if (released) return;
-      released = true;
-      if (!_stateDisposed) original.pause(reason, false);
-    };
   }
 
   ReaderProgressRequest createProgressRequest() {
@@ -218,9 +186,7 @@ class ReaderState extends State<Reader>
       maxPage: count,
       chapter: ep,
       maxChapter: maxChapter,
-      reversed:
-          currentMode == ReaderMode.galleryRightToLeft ||
-          currentMode == ReaderMode.continuousRightToLeft,
+      reversed: currentMode == ReaderMode.galleryRightToLeft,
       isCurrent: () =>
           mounted &&
           !_stateDisposed &&
@@ -288,10 +254,10 @@ class ReaderState extends State<Reader>
         listEquals(chapters?.titles.toList(growable: false), titles) &&
         pageLayout.imagesPerPage == layout.imagesPerPage &&
         pageLayout.singleImageOnFirstPage == layout.singleImageOnFirstPage &&
-        preferences.enableDoubleTapToZoom == settings.enableDoubleTapToZoom &&
         preferences.enableTapToTurnPages == settings.enableTapToTurnPages &&
         preferences.reverseTapToTurnPages == settings.reverseTapToTurnPages &&
-        preferences.longPressAction == settings.longPressAction;
+        preferences.enableDoubleTapToZoom == settings.enableDoubleTapToZoom &&
+        preferences.enableLongPressToZoom == settings.enableLongPressToZoom;
     bool current() => targetCurrent() && (route?.isCurrent ?? true);
     void turn(bool forward) {
       if (current() && viewport != null && !content.isLoading) {
@@ -313,10 +279,10 @@ class ReaderState extends State<Reader>
           currentMode,
           layout.imagesPerPage,
           layout.singleImageOnFirstPage,
-          settings.enableDoubleTapToZoom,
           settings.enableTapToTurnPages,
           settings.reverseTapToTurnPages,
-          settings.longPressAction,
+          settings.enableDoubleTapToZoom,
+          settings.enableLongPressToZoom,
         ),
         ids,
         titles,
@@ -327,10 +293,7 @@ class ReaderState extends State<Reader>
       viewport: viewport,
       preferences: settings,
       vertical: currentMode.isTopToBottom,
-      reversed:
-          currentMode == ReaderMode.galleryRightToLeft ||
-          currentMode == ReaderMode.continuousRightToLeft,
-      onCommentsPage: isOnChapterCommentsPage,
+      reversed: currentMode == ReaderMode.galleryRightToLeft,
       canUseImage: !content.isLoading && viewport != null,
       turnPage: turn,
       turnWheel: (forward) {
@@ -347,13 +310,6 @@ class ReaderState extends State<Reader>
           }
         }
       },
-      toggleAutomaticReading: () {
-        if (current()) toggleAutomaticReading();
-      },
-      stopAutomaticReading: () {
-        if (current()) autoReading.stop();
-      },
-      acquirePause: () => current() ? acquireAutomaticReadingPause() : () {},
       fullscreen: () {
         if (current()) fullscreen();
       },
@@ -361,96 +317,10 @@ class ReaderState extends State<Reader>
     );
   }
 
-  VoidCallback _observeCommentsValidity(
-    VoidCallback listener,
-    ComicSourceManager? sources,
-    bool Function() isCurrent,
-  ) {
-    if (_stateDisposed || _sessionFrozen) return () {};
-    _targetValidity.addListener(listener);
-    void sourceChanged() {
-      if (mounted && !_stateDisposed && !isCurrent()) update();
-    }
-
-    sources?.addListener(sourceChanged);
-    return () {
-      _targetValidity.removeListener(listener);
-      sources?.removeListener(sourceChanged);
-    };
-  }
-
   @override
   void didUpdateWidget(covariant Reader oldWidget) {
     super.didUpdateWidget(oldWidget);
     _targetValidity.value++;
-  }
-
-  ReaderChapterCommentsRequest? createChapterCommentsRequest() {
-    if (_sessionFrozen ||
-        controller.isDisposed ||
-        !preferences.showChapterComments) {
-      return null;
-    }
-    final chapters = widget.chapters;
-    if (chapters == null) return null;
-    final comic = cid, comicType = type, ep = chapter, chapterId = eid;
-    final sourceKey = comicType.sourceKey;
-    final source = ComicSource.find(sourceKey);
-    final load = source?.chapterCommentsLoader;
-    if (source == null || load == null || ep < 1 || ep > chapters.length) {
-      return null;
-    }
-    final ids = chapters.ids.toList(growable: false);
-    final titles = chapters.titles.toList(growable: false);
-    final send = source.sendChapterCommentFunc,
-        like = source.likeCommentFunc,
-        vote = source.voteCommentFunc;
-    final sources = ComicSourceManager.current;
-    final comicTitle = widget.name;
-    bool current() =>
-        mounted &&
-        !_stateDisposed &&
-        !_sessionFrozen &&
-        !controller.isDisposed &&
-        preferences.showChapterComments &&
-        cid == comic &&
-        type == comicType &&
-        chapter == ep &&
-        eid == chapterId &&
-        widget.name == comicTitle &&
-        identical(widget.chapters, chapters) &&
-        identical(ComicSource.find(sourceKey), source) &&
-        (sources == null || identical(ComicSourceManager.current, sources)) &&
-        listEquals(chapters.ids.toList(growable: false), ids) &&
-        listEquals(chapters.titles.toList(growable: false), titles);
-    return ReaderChapterCommentsRequest(
-      identity: (
-        this,
-        source,
-        comic,
-        chapterId,
-        ep,
-        widget.name,
-        titles[ep - 1],
-      ),
-      sourceKey: sourceKey,
-      comicTitle: widget.name,
-      chapterTitle: titles[ep - 1],
-      isCurrent: current,
-      observeValidity: (listener) => current()
-          ? _observeCommentsValidity(listener, sources, current)
-          : () {},
-      load: (page, reply) => load(comic, chapterId, page, reply),
-      send: send == null
-          ? null
-          : (text, reply) => send(comic, chapterId, text, reply),
-      like: like == null
-          ? null
-          : (id, liked) => like(comic, chapterId, id, liked),
-      vote: vote == null
-          ? null
-          : (id, up, cancel) => vote(comic, chapterId, id, up, cancel),
-    );
   }
 
   ReaderSettingsRequest? createSettingsRequest() {
@@ -469,14 +339,10 @@ class ReaderState extends State<Reader>
           type == comicType &&
           identical(ComicSource.find(sourceKey), source),
       currentMode: () => mode.key,
-      isDetectingLayout: () => isDetectingLayout,
-      detectLayout: () => detectLayout(force: true),
       applyReaderEffect: (effect) {
         switch (effect) {
           case ReaderSettingEffect.applyMode:
             applyReadingMode(ReaderMode.fromKey(preferences.readerMode));
-          case ReaderSettingEffect.detectLayout:
-            unawaited(detectLayout());
           case ReaderSettingEffect.updateVolumeListener:
             if (preferences.enableTurnPageByVolumeKey) {
               handleVolumeEvent();
@@ -498,8 +364,7 @@ class ReaderState extends State<Reader>
     if (_sessionFrozen ||
         content.isLoading ||
         originalImages == null ||
-        originalImages.isEmpty ||
-        isOnChapterCommentsPage) {
+        originalImages.isEmpty) {
       return null;
     }
     final snapshot = List<String>.unmodifiable(originalImages);
@@ -533,118 +398,6 @@ class ReaderState extends State<Reader>
     );
   }
 
-  ReaderImageFavoriteQuery? createImageFavoriteQuery() {
-    final currentImages = images;
-    if (_sessionFrozen ||
-        currentImages == null ||
-        currentImages.isEmpty ||
-        isOnChapterCommentsPage) {
-      return null;
-    }
-    final access = imageFavorites.capture();
-    final comic = cid, comicType = type, chapterId = eid, imagePage = page;
-    final layout = pageLayout;
-    final currentMode = mode;
-    final range = layout.imageRange(imagePage, currentImages.length);
-    final sourcePage = range.$2 - range.$1 == 1 ? range.$1 + 1 : null;
-    final source = ComicSource.find(comicType.sourceKey);
-    return ReaderImageFavoriteQuery(
-      key: (
-        access.identity,
-        comic,
-        comicType,
-        source,
-        chapterId,
-        imagePage,
-        currentImages,
-        currentMode,
-        range,
-      ),
-      isCurrent: () =>
-          mounted &&
-          !_sessionFrozen &&
-          access.isCurrent &&
-          identical(HistoryScope.readImages(context), imageFavorites) &&
-          cid == comic &&
-          type == comicType &&
-          eid == chapterId &&
-          page == imagePage &&
-          mode == currentMode &&
-          pageLayout.imagesPerPage == layout.imagesPerPage &&
-          pageLayout.singleImageOnFirstPage == layout.singleImageOnFirstPage &&
-          identical(images, currentImages) &&
-          identical(ComicSource.find(comicType.sourceKey), source),
-      read: () => sourcePage == null
-          ? Future.value()
-          : access.isCollected(
-              comic,
-              comicType.sourceKey,
-              chapterId,
-              sourcePage,
-            ),
-    );
-  }
-
-  ReaderImageFavoriteRequest? createImageFavoriteRequest() {
-    final originalImages = images;
-    if (_sessionFrozen || originalImages == null || originalImages.isEmpty) {
-      return null;
-    }
-    final access = imageFavorites.capture();
-    final comic = cid, comicType = type, chapterId = eid, ep = chapter;
-    final source = ComicSource.find(comicType.sourceKey);
-    final snapshot = List<String>.unmodifiable(originalImages);
-    final title = history?.title ?? widget.name,
-        subtitle = history?.subtitle ?? '';
-    final author = widget.author;
-    final tags = List<String>.unmodifiable(widget.tags);
-    final translatedTags = tags
-        .map((tag) => tag.translateTagsToCN)
-        .toList(growable: false);
-    final epName = widget.chapters?.titles.elementAtOrNull(ep - 1) ?? 'E$ep';
-    bool current() =>
-        mounted &&
-        !_sessionFrozen &&
-        access.isCurrent &&
-        identical(HistoryScope.readImages(context), imageFavorites) &&
-        cid == comic &&
-        type == comicType &&
-        eid == chapterId &&
-        chapter == ep &&
-        identical(images, originalImages) &&
-        listEquals(images, snapshot) &&
-        identical(ComicSource.find(comicType.sourceKey), source);
-    return ReaderImageFavoriteRequest(
-      supported: !snapshot.first.startsWith('file://'),
-      isCurrent: current,
-      toggle: (index, checkActive) {
-        checkActive();
-        if (!current() || index < 0 || index >= snapshot.length) {
-          throw const ImageWorkTaskCancelled();
-        }
-        return access.toggle(
-          ImageFavoriteInput(
-            id: comic,
-            sourceKey: comicType.sourceKey,
-            eid: chapterId,
-            ep: ep,
-            epName: epName,
-            title: title,
-            subtitle: subtitle,
-            author: author,
-            tags: tags,
-            translatedTags: translatedTags,
-            maxPage: snapshot.length,
-            page: index + 1,
-            imageKey: snapshot[index],
-            coverKey: snapshot.first,
-          ),
-          checkActive: checkActive,
-        );
-      },
-    );
-  }
-
   late final chapterNavigation = ReaderChapterNavigationController(
     onChanged: update,
   );
@@ -661,7 +414,7 @@ class ReaderState extends State<Reader>
     final source = ComicSource.find(sourceKey);
     final ids = chapters.ids.toList(growable: false);
     final titles = chapters.titles.toList(growable: false);
-    final supported = !currentMode.isGallery && !currentMode.isWaterfall;
+    final supported = !currentMode.isGallery;
     return ReaderChapterNavigationRequest(
       identity: (
         this,
@@ -692,7 +445,8 @@ class ReaderState extends State<Reader>
           listEquals(chapters.titles.toList(growable: false), titles),
       canPrevious: supported && !isFirstChapterOfGroup,
       canNext: supported && !isLastChapterOfGroup,
-      reversed: currentMode == ReaderMode.continuousRightToLeft,
+      // The remaining continuous modes all read top to bottom.
+      reversed: false,
       select: (direction) => controller.toChapter(ep + direction),
     );
   }
@@ -749,7 +503,7 @@ class ReaderState extends State<Reader>
   }
 
   late final controller = ReaderController(
-    pageCount: () => totalPages,
+    pageCount: () => maxPage,
     chapterCount: () => maxChapter,
     animationEnabled: () => preferences.enablePageAnimation,
     viewport: () => imageViewController,
@@ -783,75 +537,15 @@ class ReaderState extends State<Reader>
   bool toPrevChapter({bool toLastPage = false}) =>
       toChapter(chapter - 1, toLastPage: toLastPage);
 
-  ReaderChapterMenuRequest? createChapterMenu() {
-    final chapters = widget.chapters;
-    if (chapters == null || _sessionFrozen || controller.isDisposed) {
-      return null;
-    }
-    final comic = cid, comicType = type;
-    final source = ComicSource.find(comicType.sourceKey);
-    final data = ReaderChapterMenuData(
-      chapters,
-      currentChapter: chapter,
-      downloaded:
-          LocalManager().find(comic, comicType)?.downloadedChapters ?? const [],
-    );
-    return ReaderChapterMenuRequest(
-      data: data,
-      isCurrent: () =>
-          mounted &&
-          !_sessionFrozen &&
-          !controller.isDisposed &&
-          cid == comic &&
-          type == comicType &&
-          identical(widget.chapters, chapters) &&
-          identical(ComicSource.find(comicType.sourceKey), source) &&
-          data.matches(chapters),
-      select: toChapter,
-    );
-  }
-
   void update() {
     if (!_stateDisposed) _targetValidity.value++;
     if (_sessionClosing != null || _sessionFrozen) return;
-    _updateScreenAwake();
-    _cancelOutdatedLayout();
     if (mounted) setState(() {});
   }
 
-  /// The maximum page number for images only (excluding chapter comments page).
-  /// This is used for display purposes and history recording.
+  /// The maximum page number for images. Chapter comments are no longer part
+  /// of the reader's page sequence, so this is also the internal page count.
   int get maxPage => pageLayout.pageCount(images?.length);
-
-  /// Total pages including chapter comments page (used for internal page control).
-  int get totalPages {
-    var pages = maxPage;
-    if (_shouldShowChapterCommentsAtEnd) pages++;
-    return pages;
-  }
-
-  /// Whether the current page is the chapter comments page.
-  bool get isOnChapterCommentsPage {
-    return _shouldShowChapterCommentsAtEnd && page > maxPage;
-  }
-
-  bool get _shouldShowChapterCommentsAtEnd {
-    if (mode != ReaderMode.galleryLeftToRight &&
-        mode != ReaderMode.galleryRightToLeft) {
-      return false;
-    }
-    if (widget.chapters == null) return false;
-    var source = ComicSource.find(type.sourceKey);
-    if (source?.chapterCommentsLoader == null) return false;
-    return appdata.settings
-                .readerSettings(cid, type.sourceKey)
-                .showChapterComments ==
-            true &&
-        appdata.settings
-                .readerSettings(cid, type.sourceKey)
-                .showChapterCommentsAtEnd ==
-            true;
-  }
 
   @override
   ComicType get type => widget.type;
@@ -928,9 +622,6 @@ class ReaderState extends State<Reader>
     _platformEffects?.dispose();
     disposeReaderWindow();
     controller.dispose();
-    autoReading.pause('session closed', true);
-    autoReading.stop();
-    _layoutAttempt?.task.cancel();
     // A host can close from inside a child's callback or dependency rebuild.
     // Admission freezes now; the visual update waits until that build ends.
     scheduleMicrotask(() {
@@ -989,299 +680,17 @@ class ReaderState extends State<Reader>
     }
   }
 
-  bool _hasPresentedImages = false;
-  _ReaderLayoutAttempt? _layoutAttempt;
-  final _sampledChapters = <String>{};
-  int _layoutSaveRevision = 0;
-  int _successfulLayoutSaveRevision = 0;
-  int _failedLayoutSaveRevision = 0;
-
-  bool get _needsLayoutSaveRetry =>
-      _failedLayoutSaveRevision > _successfulLayoutSaveRevision;
-
   ReaderSettings get preferences =>
       appdata.settings.readerSettings(cid, type.sourceKey);
 
-  bool _automaticReadingRefreshQueued = false;
-  bool _screenAwakePaused = false;
-
-  void _updateScreenAwake() {
-    final effects = _platformEffects;
-    if (effects == null) return;
-    effects.setScreenAwake(
-      !_sessionFrozen &&
-          !_screenAwakePaused &&
-          autoReading.isActive &&
-          preferences.read(ReaderPreferences.autoReadingKeepScreenOn),
-    );
-  }
-
-  void _automaticReadingChanged() {
-    if (_stateDisposed) return;
-    _updateScreenAwake();
-    // Input ownership can end while a replacement gesture widget is built.
-    // Release the pause synchronously; defer only the ancestor's UI refresh.
-    if (WidgetsBinding.instance.schedulerPhase ==
-        SchedulerPhase.persistentCallbacks) {
-      if (_automaticReadingRefreshQueued) return;
-      _automaticReadingRefreshQueued = true;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _automaticReadingRefreshQueued = false;
-        if (mounted && !_stateDisposed) update();
-      });
-    } else {
-      update();
-    }
-  }
-
-  late final autoReading = AutoReadingController(
-    settings: () {
-      final current = preferences;
-      return AutoReadingSettings(
-        gallery: mode.isGallery,
-        pageInterval: current.autoPageTurningInterval,
-        pixelsPerSecond: current.autoScrollSpeed,
-        stepped: current.autoScrollStyle == 'stepped',
-        stepsPerSecond: current.autoScrollFrequency,
-        pixelsPerStep: current.autoScrollDistance,
-        skipUnavailableImages: current.autoReadingSkipUnavailableImages,
-        imageWaitSeconds: current.autoReadingImageWaitSeconds,
-      );
-    },
-    canAdvance: () {
-      final viewport = imageViewController;
-      return mounted &&
-          _session.contentReady &&
-          !isLoading &&
-          !isPageAnimating &&
-          (ModalRoute.of(context)?.isCurrent ?? true) &&
-          viewport is AutoReadingViewport &&
-          (viewport is AutoReadingImageViewport
-              ? (viewport as AutoReadingImageViewport)
-                        .autoReadingImages
-                        .state !=
-                    AutoReadingImageState.blocked
-              : (viewport as AutoReadingViewport).autoReadingReady);
-    },
-    imageReadiness: () {
-      final viewport = imageViewController;
-      return viewport is AutoReadingImageViewport
-          ? (viewport as AutoReadingImageViewport).autoReadingImages
-          : const AutoReadingImageReadiness(AutoReadingImageState.ready, 0);
-    },
-    advance: (distance) {
-      final across = preferences.autoReadingAcrossChapters;
-      if (!mode.isGallery) {
-        return (imageViewController as AutoReadingViewport).autoScroll(
-          distance,
-          acrossChapters: across,
-          skipUnavailableImages: preferences.autoReadingSkipUnavailableImages,
-        );
-      }
-      if (page < maxPage) {
-        return toNextPage()
-            ? AutoReadingStep.advanced
-            : AutoReadingStep.waiting;
-      }
-      if (across && chapter < maxChapter) {
-        return toNextChapter()
-            ? AutoReadingStep.advanced
-            : AutoReadingStep.waiting;
-      }
-      return AutoReadingStep.finished;
-    },
-  )..addListener(_automaticReadingChanged);
-
-  bool get isDetectingLayout =>
-      _layoutAttempt != null && !_layoutAttempt!.task.isCancelled;
-
-  @protected
-  ComicLayoutProbe createLayoutProbe() => ComicLayoutProbe();
-
-  @protected
-  Future<void> saveReadingSettings(void Function(Settings draft) edit) =>
-      appdata.updateSettings(edit, sync: false);
-
-  bool get _usesAutomaticReadingMode =>
-      preferences.autoReaderMode &&
-      appdata.settings.comicReaderModeOverride(cid, type.sourceKey) == null;
-
-  bool get _shouldDetectLayout =>
-      _usesAutomaticReadingMode &&
-      (appdata.settings.comicLayout(cid, type.sourceKey) ==
-              ComicLayout.unknown ||
-          _needsLayoutSaveRetry);
-
-  /// Give first-open detection a small budget, then let reading proceed.
-  Future<void> prepareReadingMode() async {
-    if (_shouldDetectLayout &&
-        (!_sampledChapters.contains(eid) || _needsLayoutSaveRetry)) {
-      final detection = detectLayout();
-      if (!_hasPresentedImages) {
-        await Future.any([
-          detection,
-          Future<void>.delayed(const Duration(milliseconds: 700)),
-        ]);
-      }
-    }
-    _hasPresentedImages = true;
-  }
-
-  Future<void> detectLayout({bool force = false}) {
-    final currentImages = images;
-    if (!mounted || currentImages == null) return Future.value();
-    final previous = _layoutAttempt;
-    if (previous != null) {
-      if (!force &&
-          _matchesLayoutInput(previous) &&
-          !previous.task.isCancelled &&
-          !previous.probe.isCancelled) {
-        return previous.result.future;
-      }
-      previous.task.cancel();
-    }
-    if (!force &&
-        (!_shouldDetectLayout ||
-            (_sampledChapters.contains(eid) && !_needsLayoutSaveRetry))) {
-      return Future.value();
-    }
-    ComicLayoutProbe? probe;
-    _ReaderLayoutAttempt? attempt;
-    final task = imageWork.start(
-      onCancel: () {
-        try {
-          probe?.cancel();
-        } finally {
-          attempt?.completeResult();
-        }
-      },
-    );
-    if (task == null) return Future.value();
-    try {
-      probe = createLayoutProbe();
-      final started = _ReaderLayoutAttempt(
-        probe: probe,
-        task: task,
-        images: currentImages,
-        comicId: cid,
-        sourceKey: type.sourceKey,
-        networkSourceKey: type.comicSource?.key,
-        chapter: chapter,
-        chapterId: eid,
-      );
-      attempt = started;
-      _layoutAttempt = started;
-      update();
-      unawaited(_runLayoutDetection(started));
-      return started.result.future;
-    } catch (error, stack) {
-      task.recordFailure(error, stack);
-      task.finish();
-      Log.error('Reader', 'Failed to start layout detection: $error', stack);
-      return Future.value();
-    }
-  }
-
-  bool _matchesLayoutInput(_ReaderLayoutAttempt attempt) =>
-      mounted &&
-      identical(images, attempt.images) &&
-      chapter == attempt.chapter &&
-      eid == attempt.chapterId &&
-      cid == attempt.comicId &&
-      type.sourceKey == attempt.sourceKey;
-
-  void _cancelOutdatedLayout() {
-    final attempt = _layoutAttempt;
-    if (attempt != null && !_matchesLayoutInput(attempt)) {
-      attempt.task.cancel();
-    }
-  }
-
-  bool _canPublishLayout(_ReaderLayoutAttempt attempt) =>
-      identical(_layoutAttempt, attempt) &&
-      _matchesLayoutInput(attempt) &&
-      !attempt.task.isCancelled &&
-      !attempt.probe.isCancelled;
-
-  Future<void> _runLayoutDetection(_ReaderLayoutAttempt attempt) async {
-    final reported = Set<Object>.identity();
-    void report(Object error, StackTrace stack) {
-      if (!reported.add(error)) return;
-      attempt.task.recordFailure(error, stack);
-      Log.error('Reader', 'Layout detection failed: $error', stack);
-    }
-
-    // Observe cleanup immediately, even if the presentation result is still
-    // pending. Both channels may report the same original failure.
-    var cleanupFailed = false;
-    final cleanup = attempt.probe.done.then<void>(
-      (_) {},
-      onError: (Object error, StackTrace stack) {
-        cleanupFailed = true;
-        report(error, stack);
-      },
-    );
-    try {
-      final detection = await attempt.probe.detect(
-        images: List.of(attempt.images),
-        sourceKey: attempt.networkSourceKey,
-        comicId: attempt.comicId,
-        chapterId: attempt.chapterId,
-      );
-      if (!_canPublishLayout(attempt)) return;
-      await cleanup;
-      if (cleanupFailed || !_canPublishLayout(attempt)) return;
-      final saveRevision = ++_layoutSaveRevision;
-      var applied = false;
-      try {
-        await saveReadingSettings((draft) {
-          if (!_canPublishLayout(attempt)) return;
-          draft.setComicLayout(attempt.comicId, attempt.sourceKey, detection);
-          applied = true;
-        });
-      } catch (_) {
-        // Saving can fail after part of the global settings is persisted.
-        // The layout belongs to this comic, even if a different chapter or
-        // probe now owns the UI. A newer successful save repairs old failures.
-        if (saveRevision > _failedLayoutSaveRevision) {
-          _failedLayoutSaveRevision = saveRevision;
-        }
-        rethrow;
-      }
-      if (!applied) return;
-      if (saveRevision > _successfulLayoutSaveRevision) {
-        _successfulLayoutSaveRevision = saveRevision;
-      }
-      if (!_canPublishLayout(attempt)) return;
-      _sampledChapters.add(attempt.chapterId);
-      if (detection.layout == ComicLayout.unknown ||
-          !_usesAutomaticReadingMode) {
-        return;
-      }
-      final next = ReaderMode.fromKey(preferences.readerMode);
-      if (!mounted || next == mode) return;
-      applyReadingMode(next);
-      showToast(
-        context: context,
-        message: 'Switched to @mode'.tlParams({
-          'mode': readerModeLabels[next.key] ?? next.key,
-        }),
-      );
-    } catch (error, stack) {
-      report(error, stack);
-      attempt.task.cancel();
-    } finally {
-      if (identical(_layoutAttempt, attempt)) {
-        _layoutAttempt = null;
-        if (mounted) update();
-      }
-      // Cancellation/timeout releases the UI budget while the original work
-      // and any accepted settings save remain owned by the reading session.
-      attempt.completeResult();
-      await cleanup;
-      attempt.task.finish();
-    }
-  }
+  /// Whether the current mode renders the following chapter in the same view.
+  ///
+  /// Only the vertical continuous mode merges chapters: it replaces the removed
+  /// waterfall mode. Horizontal continuous modes keep their explicit chapter
+  /// boundary, and gallery modes never cross chapters.
+  bool get crossChapterFlow =>
+      mode == ReaderMode.continuousTopToBottom &&
+      preferences.autoReadingAcrossChapters;
 
   void applyReadingMode(ReaderMode next) {
     if (!mounted || _sessionFrozen || mode == next) return;
@@ -1330,7 +739,6 @@ class ReaderState extends State<Reader>
     );
     history = widget.history;
     final historyManager = HistoryScope.read(context);
-    final durationHistory = widget.history;
     _sessionRegistry = context
         .getInheritedWidgetOfExactType<SelectionTasksScope>()
         ?.registry;
@@ -1340,18 +748,10 @@ class ReaderState extends State<Reader>
     final lifecycle = WidgetsBinding.instance.lifecycleState;
     _volumeForeground =
         lifecycle == null || lifecycle == AppLifecycleState.resumed;
-    _screenAwakePaused = !_volumeForeground;
+    // No reading-time tracker: nothing displays that statistic, and its extra
+    // write was one more thing that could fail while leaving the reader.
     _session = ReaderSession(
       imageWork: imageWork,
-      durations: ReadingSessionTracker(
-        onDuration: (duration) =>
-            historyManager.addReadDuration(durationHistory, duration),
-        onError: (error, stack) => Log.error(
-          'Reader',
-          'Failed to save reading duration: $error',
-          stack,
-        ),
-      ),
       progress: ReaderHistoryWriter(
         write: () async {
           final item = history;
@@ -1363,10 +763,8 @@ class ReaderState extends State<Reader>
           stack,
         ),
       ),
-      pauseAutoReading: (paused) {
-        _screenAwakePaused = paused;
-        autoReading.pause('lifecycle', paused);
-        _updateScreenAwake();
+      // Volume ownership follows the session's foreground/hold state.
+      onPauseChanged: (_) {
         _observeVolume(_updateVolume());
       },
       onClosed: () {
@@ -1616,15 +1014,19 @@ class ReaderState extends State<Reader>
       if (effects != null) attempt('platform restoration', () => effects.ready),
     ]);
     if (failures.isNotEmpty) {
-      await attempt('resume platform effects', () async => effects?.release());
-      await attempt('resume reading', () async => release?.call());
-      if (failures.length == 1) {
-        Error.throwWithStackTrace(
-          failures.single.error,
-          failures.single.stackTrace,
+      // Leaving must not depend on a save or a platform restore succeeding.
+      // Blocking here stranded the reader on a write it could not repair, and
+      // the transport's own cancellation was reported as just such a failure.
+      // Keep every failure as a diagnostic, then leave: the session still
+      // retries its writers while it finalizes in the background.
+      for (final failure in failures) {
+        Log.error(
+          'Reader',
+          'Failed to prepare reader exit: '
+              '${failure.operation}: ${failure.error}',
+          failure.stackTrace,
         );
       }
-      throw ReaderWindowFailure(failures);
     }
     return () {
       effects?.release();
@@ -1802,11 +1204,8 @@ class ReaderState extends State<Reader>
     _targetValidity.value++;
     viewportBinding.dispose();
     controller.dispose();
-    _layoutAttempt?.task.cancel();
-    _layoutAttempt = null;
     WidgetsBinding.instance.removeObserver(this);
     unawaited(_closeSession());
-    autoReading.dispose();
     focusNode.dispose();
     _platformEffects?.dispose();
     _beginCloseVolume();
@@ -1818,8 +1217,6 @@ class ReaderState extends State<Reader>
   }
 
   void onReaderContentLoading() {
-    // A reload can retain the old images while the replacement is fetched.
-    _layoutAttempt?.task.cancel();
     _session.setContentReady(false);
   }
 
@@ -1868,7 +1265,10 @@ class ReaderState extends State<Reader>
                   reader: this,
                   child: ReaderImagesHost(
                     reader: this,
-                    key: Key(mode.isWaterfall ? mode.key : chapter.toString()),
+                    // A cross-chapter flow reports the scrolled chapter while
+                    // the view stays alive, so its host key must not follow
+                    // [chapter].
+                    key: Key(crossChapterFlow ? mode.key : chapter.toString()),
                   ),
                 ),
               ),
@@ -1900,14 +1300,33 @@ class ReaderState extends State<Reader>
     // arrive. Keep the saved image index intact until loading/migration ends.
     if (_sessionFrozen || isLoading || images == null) return;
     if (history != null) {
+      final total = images!.length;
+      // The chapter counts as read once its last page is on screen. Using the
+      // last page rather than "opened" is what stops a half-read chapter from
+      // showing as finished on the shelf.
+      final range = pageLayout.imageRange(page, total);
+      // The chapter counts as read once its last page is on screen. Using the
+      // last page rather than "opened" is what stops a half-read chapter from
+      // showing as finished on the shelf.
+      //
+      // "Single image on first page" maps page 1 to image range (0, 1) no matter
+      // how many images the chapter has, so comparing against that end alone
+      // marked a one-image chapter read the moment it opened, and a chapter
+      // whose last display page was reached by that shortcut did the same. The
+      // read mark therefore also requires page 1 to be the chapter's only page.
+      final atEnd =
+          total > 0 &&
+          range.$2 >= total &&
+          (page > 1 || pageLayout.pageCount(total) == 1);
       applyReaderHistoryProgress(
         history: history!,
         page: page,
-        imageCount: images!.length,
+        imageCount: total,
         chapter: chapter,
         chapters: widget.chapters,
         layout: pageLayout,
         time: DateTime.now(),
+        markRead: atEnd,
       );
       _session.scheduleProgress();
       // A content/animation completion can arrive after the reader's own exit
@@ -2013,62 +1432,35 @@ abstract mixin class ReaderImagePerPageHandler {
   void resetPageAnimation();
 }
 
-class _ReaderLayoutAttempt {
-  _ReaderLayoutAttempt({
-    required this.probe,
-    required this.task,
-    required this.images,
-    required this.comicId,
-    required this.sourceKey,
-    required this.networkSourceKey,
-    required this.chapter,
-    required this.chapterId,
-  });
-  final ComicLayoutProbe probe;
-  final ImageWorkTask task;
-  final List<String> images;
-  final String comicId;
-  final String sourceKey;
-  final String? networkSourceKey;
-  final int chapter;
-  final String chapterId;
-  final result = Completer<void>();
-
-  void completeResult() {
-    if (!result.isCompleted) result.complete();
-  }
-}
-
 enum ReaderMode {
-  waterfallTopToBottom('waterfallTopToBottom'),
   galleryLeftToRight('galleryLeftToRight'),
   galleryRightToLeft('galleryRightToLeft'),
   galleryTopToBottom('galleryTopToBottom'),
-  continuousTopToBottom('continuousTopToBottom'),
-  continuousLeftToRight('continuousLeftToRight'),
-  continuousRightToLeft('continuousRightToLeft');
+  continuousTopToBottom('continuousTopToBottom');
 
   final String key;
 
   bool get isGallery => key.startsWith('gallery');
 
-  bool get isWaterfall => key.startsWith('waterfall');
-
-  bool get isContinuous => key.startsWith('continuous') || isWaterfall;
+  bool get isContinuous => key.startsWith('continuous');
 
   bool get isTopToBottom =>
-      this == galleryTopToBottom ||
-      this == continuousTopToBottom ||
-      this == waterfallTopToBottom;
+      this == galleryTopToBottom || this == continuousTopToBottom;
 
   const ReaderMode(this.key);
 
+  /// Resolves a stored mode key. Removed modes (`waterfallTopToBottom` and the
+  /// horizontal continuous modes) migrate onto the remaining continuous mode,
+  /// so an existing preference keeps working without user action.
   static ReaderMode fromKey(String key) {
+    if (key == 'waterfallTopToBottom') {
+      return continuousTopToBottom;
+    }
     for (var mode in values) {
       if (mode.key == key) {
         return mode;
       }
     }
-    return waterfallTopToBottom;
+    return continuousTopToBottom;
   }
 }

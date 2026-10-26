@@ -29,11 +29,14 @@ class SourceInstallationSummary extends StatelessWidget {
             'View installation results'.tl,
         ];
         if (compact) {
+          // Nothing to report, so show nothing. A permanently visible icon
+          // looked like a stray toolbar button when no task had ever run.
+          if (queue.tasks.isEmpty) return const SizedBox.shrink();
           final count = queue.activeCount > 0
               ? queue.activeCount
               : queue.failureCount;
-          // A permanent toolbar entry keeps the catalog in place when the
-          // first task starts or finished tasks are cleared.
+          // While tasks exist the entry stays put, so the catalog keeps its
+          // place when the first task starts or finished ones are cleared.
           return IconButton(
             tooltip: ['Installation tasks'.tl, ...parts].join(' · '),
             onPressed: () =>
@@ -83,21 +86,24 @@ class SourceInstallationPage extends StatelessWidget {
           final tasks = queue.tasks;
           // Keep stable insertion order while tasks change state.
           return ListView(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
             children: [
               Text(
                 'You can keep browsing while sources install. Tasks continue until you quit the app.'
                     .tl,
+                style: Theme.of(context).textTheme.bodySmall,
               ),
-              const SizedBox(height: 8),
               Align(
                 alignment: Alignment.centerRight,
                 child: TextButton.icon(
                   onPressed: tasks.any((t) => !t.active)
                       ? queue.clearFinished
                       : null,
-                  icon: const Icon(Icons.clear_all),
+                  icon: const Icon(Icons.clear_all, size: 18),
                   label: Text('Clear finished tasks'.tl),
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                  ),
                 ),
               ),
               if (tasks.isEmpty)
@@ -108,22 +114,25 @@ class SourceInstallationPage extends StatelessWidget {
               for (final task in tasks)
                 Card.outlined(
                   key: ValueKey(task.id),
-                  margin: const EdgeInsets.only(bottom: 12),
+                  margin: const EdgeInsets.only(bottom: 8),
                   child: Padding(
-                    padding: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
                           task.name,
-                          style: Theme.of(context).textTheme.titleMedium,
+                          style: Theme.of(context).textTheme.titleSmall,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        const SizedBox(height: 4),
                         Text(
                           task.originLabel,
                           style: Theme.of(context).textTheme.bodySmall,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        const SizedBox(height: 8),
+                        const SizedBox(height: 4),
                         SourceInstallationStatus(
                           task: task,
                           showFullError: true,
@@ -220,8 +229,8 @@ class SourceInstallationRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final style = Theme.of(context).textTheme.bodySmall!;
-    final height = (MediaQuery.textScalerOf(context).scale(14) * 1.5 + 16)
-        .clamp(48.0, double.infinity);
+    final height = (MediaQuery.textScalerOf(context).scale(14) * 1.5 + 12)
+        .clamp(40.0, double.infinity);
     return SizedBox(
       height: height,
       child: Row(
@@ -238,6 +247,10 @@ class SourceInstallationRow extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
+          // A fixed action slot keeps the row's right edge stable across every
+          // state: a spinner, "Reload" and "Retry" all line up on the same edge.
+          // The slot used to centre its child, so a narrow label floated inside
+          // it instead of touching that edge.
           SizedBox(
             width: 144,
             child: Align(alignment: Alignment.centerRight, child: action),

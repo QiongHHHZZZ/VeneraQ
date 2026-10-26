@@ -161,11 +161,22 @@ class SourceInstallations implements Listenable {
       _tasks.where((t) => t.phase == SourceInstallPhase.failed).length;
 
   SourceInstallTask? taskFor({String? sourceKey, String? url}) {
+    // A task is identified by the copy it installs, not by either half of it.
+    // Matching on key *or* url conflated two different copies of one source:
+    // the same key published by two repositories has two urls, so a lookup for
+    // one of them answered with the other's task — and every caller below
+    // treats any match as "this copy is already being installed".
+    bool matches(SourceInstallTask task) {
+      if (sourceKey == null && url == null) return false;
+      if (url != null && task.url != url) return false;
+      // A task without a key has not parsed its script yet, so it cannot claim
+      // to be any particular source.
+      if (sourceKey != null && task.sourceKey != sourceKey) return false;
+      return true;
+    }
+
     // Active tasks take priority over older completed attempts, including a
     // task started for the same key in a different repository.
-    bool matches(SourceInstallTask task) =>
-        (sourceKey != null && task.sourceKey == sourceKey) ||
-        (url != null && task.url == url);
     final matching = _tasks.reversed.where(matches);
     for (final task in matching) {
       if (task.active) return task;
@@ -189,6 +200,36 @@ class SourceInstallations implements Listenable {
       sourceKey: entry.key,
       repository: repository,
     );
+  }
+
+  /// Replaces an installed source with the copy another repository publishes.
+  ///
+  /// The key stays the same, so reading progress, finished chapters and the
+  /// source's settings row all survive; only the script and its download origin
+  /// change. `enqueueRepository` refuses this by design — it exists to add a
+  /// source, and silently swapping a working script is a decision the reader has
+  /// to make, which is why the caller confirms first.
+  SourceInstallTask replaceFromRepository(
+    SourceRepository repository,
+    SourceCatalogEntry entry,
+  ) {
+    _checkOpen();
+    final existing = taskFor(sourceKey: entry.key, url: entry.url);
+    if (existing?.active == true) return existing!;
+    if (manager.find(entry.key) == null) {
+      throw OperationFailure.message('This source is not installed.'.tl);
+    }
+    final task = _enqueue(
+      name: entry.name,
+      url: entry.url,
+      sourceKey: entry.key,
+      repository: repository,
+    );
+    // `_pump` already queued the download; flip it to a replacement before the
+    // attempt runs so the download lands on `replaceScript` rather than a
+    // second install of the same key.
+    task.replaceExisting = true;
+    return task;
   }
 
   SourceInstallTask enqueueUrl(String url) {
@@ -535,6 +576,20 @@ class SourceInstallations implements Listenable {
             _publish();
           },
         );
+        // A replacement that came from a repository must follow that repository
+        // from now on. Without this the script changes but the update check keeps
+        // looking in the old one, so the next "update" would quietly undo it.
+        if (repository != null) {
+          await repositories.setOrigin(
+            existing.key,
+            SourceOrigin(
+              kind: 'repository',
+              repositoryId: repository.id,
+              repositoryName: repository.name,
+              url: task.url,
+            ),
+          );
+        }
         task.phase = SourceInstallPhase.succeeded;
         task.name = manager.find(existing.key)?.name ?? existing.name;
         _publish();

@@ -1,19 +1,14 @@
-import 'package:venera_next/foundation/application_preferences.dart';
-import 'package:venera_next/foundation/global_preference_store.dart';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:sliver_tools/sliver_tools.dart';
 import 'package:venera_next/components/appbar.dart';
 import 'package:venera_next/components/flyout.dart';
 import 'package:venera_next/components/gesture.dart';
 import 'package:venera_next/components/loading.dart';
 import 'package:venera_next/components/menu.dart';
-import 'package:venera_next/components/pop_up_widget.dart';
 import 'package:venera_next/components/scroll.dart';
 import 'package:venera_next/components/select.dart';
-import 'package:venera_next/routing/app_navigation.dart';
 import 'package:venera_next/foundation/app_locale.dart';
 import 'package:venera_next/foundation/appdata.dart';
 import 'package:venera_next/foundation/context.dart';
@@ -21,14 +16,12 @@ import 'package:venera_next/features/comic_source/comic_source.dart';
 import 'package:venera_next/foundation/global_state.dart';
 import 'package:venera_next/foundation/log.dart';
 import 'package:venera_next/routing/app_links.dart';
-import 'package:venera_next/routing/settings.dart';
 import 'package:venera_next/foundation/extensions.dart';
 import 'package:venera_next/foundation/translations.dart';
 import 'package:venera_next/foundation/widget_utils.dart';
 
 import 'package:venera_next/features/comic_details/comic_details.dart';
 import 'aggregated_search_page.dart';
-import 'search_result_page.dart';
 import 'search_shortcuts.dart';
 
 class SearchPage extends StatefulWidget {
@@ -41,39 +34,16 @@ class SearchPage extends StatefulWidget {
 class _SearchPageState extends State<SearchPage> {
   late final SearchBarController controller;
 
-  late List<String> searchSources;
-
-  String searchTarget = "";
-
-  SearchPageData get currentSearchPageData =>
-      ComicSource.find(searchTarget)!.searchPageData!;
-
-  bool aggregatedSearch = false;
-
   var focusNode = FocusNode();
-
-  var options = <String>[];
 
   void update() {
     setState(() {});
   }
 
   void search([String? text]) {
-    if (aggregatedSearch) {
-      context
-          .to(() => AggregatedSearchPage(keyword: text ?? controller.text))
-          .then((_) => update());
-    } else {
-      context
-          .to(
-            () => SearchResultPage(
-              text: text ?? controller.text,
-              sourceKey: searchTarget,
-              options: options,
-            ),
-          )
-          .then((_) => update());
-    }
+    context
+        .to(() => AggregatedSearchPage(keyword: text ?? controller.text))
+        .then((_) => update());
   }
 
   var suggestions = <Pair<String, TranslationType>>[];
@@ -109,11 +79,6 @@ class _SearchPageState extends State<SearchPage> {
           );
         }
       }
-    }
-
-    if (!ComicSource.find(searchTarget)!.enableTagsSuggestions) {
-      update();
-      return;
     }
 
     bool check(String text, String key, String value) {
@@ -157,79 +122,22 @@ class _SearchPageState extends State<SearchPage> {
 
   @override
   void initState() {
-    findSearchSources();
-    var defaultSearchTarget = GlobalPreferenceStore(
-      appdata.settings,
-    ).read(DiscoveryPreferences.defaultSearchTarget);
-    if (defaultSearchTarget == "_aggregated_") {
-      aggregatedSearch = true;
-    } else if (defaultSearchTarget != null &&
-        searchSources.contains(defaultSearchTarget)) {
-      searchTarget = defaultSearchTarget;
-    }
     controller = SearchBarController(onSearch: search);
-    appdata.settings.addListener(updateSearchSourcesIfNeeded);
     super.initState();
   }
 
   @override
   void dispose() {
     focusNode.dispose();
-    appdata.settings.removeListener(updateSearchSourcesIfNeeded);
     super.dispose();
   }
 
-  void findSearchSources() {
-    var all = ComicSource.all()
-        .where((e) => e.searchPageData != null)
-        .map((e) => e.key)
-        .toList();
-    var settings =
-        GlobalPreferenceStore(
-          appdata.settings,
-        ).read(DiscoveryPreferences.searchSources) ??
-        const <String>[];
-    var sources = <String>[];
-    for (var source in settings) {
-      if (all.contains(source)) {
-        sources.add(source);
-      }
-    }
-    searchSources = sources;
-    if (!searchSources.contains(searchTarget)) {
-      searchTarget = searchSources.firstOrNull ?? "";
-    }
-  }
-
-  void updateSearchSourcesIfNeeded() {
-    var old = searchSources;
-    findSearchSources();
-    if (old.isEqualTo(searchSources)) {
-      return;
-    }
-    setState(() {});
-  }
-
-  void manageSearchSources() {
-    showPopUpWidget(appNavigation.rootContext, setSearchSourcesWidget());
-  }
-
   Widget buildEmpty() {
-    var msg = "No Search Sources".tl;
-    msg += '\n';
-    VoidCallback onTap;
-    if (ComicSource.isEmpty) {
-      msg += "Please add some sources".tl;
-      onTap = () {
-        context.to(() => ComicSourcePage());
-      };
-    } else {
-      msg += "Please check your settings".tl;
-      onTap = manageSearchSources;
-    }
     return NetworkError(
-      message: msg,
-      retry: onTap,
+      message: "${"No Comic Sources".tl}\n${"Please add some sources".tl}",
+      retry: () {
+        context.to(() => ComicSourcePage());
+      },
       withAppbar: true,
       buttonText: "Manage".tl,
     );
@@ -237,7 +145,9 @@ class _SearchPageState extends State<SearchPage> {
 
   @override
   Widget build(BuildContext context) {
-    if (searchSources.isEmpty) {
+    // Nothing to search with: every source either has no search page or none
+    // is installed.
+    if (ComicSource.all().every((e) => e.searchPageData == null)) {
       return buildEmpty();
     }
     return Scaffold(
@@ -256,113 +166,9 @@ class _SearchPageState extends State<SearchPage> {
     if (suggestions.isNotEmpty) {
       yield buildSuggestions(context);
     } else {
-      yield buildSearchTarget();
-      yield SliverAnimatedPaintExtent(
-        duration: const Duration(milliseconds: 200),
-        child: buildSearchOptions(),
-      );
       yield const SearchShortcutsSliver();
       yield _SearchHistory(search);
     }
-  }
-
-  Widget buildSearchTarget() {
-    var sources = searchSources.map((e) => ComicSource.find(e)!).toList();
-    return SliverToBoxAdapter(
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.search),
-              title: Text("Search in".tl),
-              trailing: IconButton(
-                icon: const Icon(Icons.settings),
-                onPressed: manageSearchSources,
-              ),
-            ),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: sources.map((e) {
-                return OptionChip(
-                  text: e.name,
-                  isSelected: searchTarget == e.key || aggregatedSearch,
-                  onTap: () {
-                    if (aggregatedSearch) return;
-                    setState(() {
-                      searchTarget = e.key;
-                      useDefaultOptions();
-                    });
-                  },
-                );
-              }).toList(),
-            ),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              title: Text("Aggregated Search".tl),
-              leading: Checkbox(
-                value: aggregatedSearch,
-                onChanged: (value) {
-                  setState(() {
-                    aggregatedSearch = value ?? false;
-                  });
-                },
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void useDefaultOptions() {
-    final searchOptions = currentSearchPageData.searchOptions ?? [];
-    options = searchOptions.map((e) => e.defaultValue).toList();
-  }
-
-  Widget buildSearchOptions() {
-    if (aggregatedSearch) {
-      return const SliverToBoxAdapter(child: SizedBox());
-    }
-
-    var children = <Widget>[];
-
-    final searchOptions = currentSearchPageData.searchOptions ?? [];
-    if (searchOptions.length != options.length) {
-      useDefaultOptions();
-    }
-    if (searchOptions.isEmpty) {
-      return const SliverToBoxAdapter(child: SizedBox());
-    }
-    for (int i = 0; i < searchOptions.length; i++) {
-      final option = searchOptions[i];
-      children.add(
-        SearchOptionWidget(
-          option: option,
-          value: options[i],
-          onChanged: (value) {
-            options[i] = value;
-            update();
-          },
-          sourceKey: searchTarget,
-        ),
-      );
-    }
-
-    return SliverToBoxAdapter(
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: children,
-        ),
-      ),
-    );
   }
 
   Widget buildSuggestions(BuildContext context) {
@@ -399,15 +205,21 @@ class _SearchPageState extends State<SearchPage> {
           "",
         );
       }
-      final source = ComicSource.find(searchTarget);
-      String insert;
-      if (source?.onTagSuggestionSelected != null) {
-        insert = source!.onTagSuggestionSelected!(type?.name ?? '', text);
-      } else {
+      // No single target source decides how a tag is written; the first source
+      // that offers that hook is used, otherwise the canonical form.
+      String? insert;
+      for (final candidate in ComicSource.all()) {
+        final hook = candidate.onTagSuggestionSelected;
+        if (hook != null) {
+          insert = hook(type?.name ?? '', text);
+          break;
+        }
+      }
+      insert ??= () {
         var t = text;
         if (t.contains(' ')) t = "'$t'";
-        insert = type != null ? "${type.name}:$t" : t;
-      }
+        return type != null ? "${type.name}:$t" : t;
+      }();
       controller.text += "$insert ";
       suggestions.clear();
       update();

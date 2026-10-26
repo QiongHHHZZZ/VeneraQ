@@ -6,8 +6,9 @@ import 'reader_viewport.dart';
 import 'package:venera_next/features/reader/reader_page.dart';
 import 'package:venera_next/features/reader/reader_controller.dart';
 import 'package:venera_next/features/comic_source/comic_source.dart';
-import 'package:venera_next/features/reader/chapter_comments.dart';
 import 'package:venera_next/foundation/appdata.dart';
+import 'package:venera_next/foundation/application_preferences.dart';
+import 'package:venera_next/foundation/global_preference_store.dart';
 import 'image_read.dart';
 
 import 'gallery_view.dart';
@@ -51,8 +52,6 @@ class ReaderImagesHost extends StatelessWidget {
       loadImages: (scope) => chapters.load(chapter, scope),
       prepareMode: () async {
         if (!current()) throw const RequestCancelled();
-        await reader.prepareReadingMode();
-        if (!current()) throw const RequestCancelled();
       },
       onLoading: reader.onReaderContentLoading,
       onCommitted: () {
@@ -69,10 +68,6 @@ class ReaderImagesHost extends StatelessWidget {
       },
       onSettled: () {
         if (!current()) return;
-        if (reader.controller.content.error != null ||
-            reader.images?.isEmpty == true) {
-          reader.autoReading.stop();
-        }
         reader.updateShell();
       },
       errorBuilder: (context, error, retry) => GestureDetector(
@@ -111,69 +106,39 @@ class ReaderImagesHost extends StatelessWidget {
         reader.mode == mode &&
         originalViewport != null &&
         identical(reader.imageViewController, originalViewport);
-    void collect() {
-      if (canAct() &&
-          (!mode.isGallery || identical(reader.controller.content, content))) {
-        shell.addImageFavorite();
-      }
-    }
 
     if (reader.mode.isGallery) {
-      var showComments = reader.preferences.showChapterComments == true;
-      var showCommentsAtEnd =
-          reader.preferences.showChapterCommentsAtEnd == true;
       final preferences = reader.preferences;
       final source = reader.type.comicSource;
-      final comments = reader.createChapterCommentsRequest();
       return ReaderGalleryView(
         imageWork: reader.imageWork,
-        key: Key(
-          '${reader.mode.key}_${reader.imagesPerPage}_${showComments}_$showCommentsAtEnd',
-        ),
+        key: Key('${reader.mode.key}_${reader.imagesPerPage}'),
         data: ReaderGalleryData(
           content: content,
           layout: reader.pageLayout,
           vertical: reader.mode == ReaderMode.galleryTopToBottom,
           reverse: reader.mode == ReaderMode.galleryRightToLeft,
-          commentsAtEnd: reader.totalPages > reader.maxPage,
           firstChapter: reader.isFirstChapterOfGroup,
           lastChapter: reader.isLastChapterOfGroup,
-          preloadCount: appdata.settings.globalReaderSettings.preloadImageCount,
-          doubleTapCollect:
-              appdata.settings.globalReaderSettings.quickCollectImage ==
-              'DoubleTap',
-          centerLongPressZoom: preferences.longPressZoomPosition == 'center',
+          preloadCount: GlobalPreferenceStore(
+            appdata.settings,
+          ).read(NetworkPreferences.preloadImageCount).toInt(),
           pageAnimation: preferences.enablePageAnimation,
           sourceKey: source?.key,
           comicId: reader.cid,
           chapterId: reader.eid,
-          showImageDimensions: preferences.showImageDimensions,
-          observeImageReadiness: preferences.autoReadingSkipUnavailableImages,
         ),
         navigation: reader.controller,
         onViewportChanged: viewportChanged,
         onReady: () => reader.chapterNavigation.report(chapterNavigation, 0),
-        onPageReported: (comments, refreshEInk) {
+        onPageReported: () {
           if (!canAct() || !identical(reader.controller.content, content)) {
             return;
           }
           reader.updateShell();
-          if (comments && shell.isOpen) shell.openOrClose();
-          if (refreshEInk) shell.requestEInkRefresh();
         },
-        onChapterChanged: () {
-          if (canAct()) shell.requestEInkRefresh();
-        },
-        onCollectImage: collect,
         readerSize: () => reader.size,
         readImage: readReaderImageBytes,
-        commentsBuilder: comments == null
-            ? null
-            : (_) => EmbeddedChapterCommentsPage(
-                request: comments,
-                work: reader.imageWork,
-                onExit: reader.requestExit,
-              ),
       );
     } else {
       final preferences = reader.preferences;
@@ -182,22 +147,15 @@ class ReaderImagesHost extends StatelessWidget {
         key: Key(reader.mode.key),
         data: ReaderContinuousData(
           vertical: reader.mode.isTopToBottom,
-          reverse: reader.mode == ReaderMode.continuousRightToLeft,
-          crossChapter: reader.mode.isWaterfall,
+          reverse: false,
+          crossChapter: reader.crossChapterFlow,
           firstChapter: reader.isFirstChapterOfGroup,
           lastChapter: reader.isLastChapterOfGroup,
           maxChapter: reader.maxChapter,
-          preloadCount: appdata.settings.globalReaderSettings.preloadImageCount,
-          splitWideImages: preferences.splitDualPage == true,
-          invertSplit: preferences.splitDualPageInvert == true,
-          scrollSpeed: preferences.readerScrollSpeed,
+          preloadCount: GlobalPreferenceStore(
+            appdata.settings,
+          ).read(NetworkPreferences.preloadImageCount).toInt(),
           limitImageWidth: preferences.limitImageWidth == true,
-          sideMargin: preferences.readerSideMargin,
-          showImageDimensions: preferences.showImageDimensions,
-          doubleTapCollect:
-              appdata.settings.globalReaderSettings.quickCollectImage ==
-              'DoubleTap',
-          centerLongPressZoom: preferences.longPressZoomPosition == 'center',
           sourceKey: reader.type.comicSource?.key,
           comicId: reader.cid,
         ),
@@ -212,10 +170,6 @@ class ReaderImagesHost extends StatelessWidget {
         },
         onFloatingButton: (value) =>
             reader.chapterNavigation.report(chapterNavigation, value),
-        onCollectImage: collect,
-        onActiveChapterChanged: () {
-          if (current()) reader.detectLayout();
-        },
         onContentLoading: (loading) {
           if (!current()) return;
           if (loading) {

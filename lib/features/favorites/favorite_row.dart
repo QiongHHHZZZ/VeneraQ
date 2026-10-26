@@ -17,6 +17,13 @@ FavoriteItemWithUpdateInfo favoriteItemWithUpdateInfoFromRow(Row row) =>
     FavoriteItemWithUpdateInfo(
       favoriteItemFromRow(row),
       row['last_update_time'],
-      row['has_new_update'] == 1,
-      row['last_check_time'],
+        row['last_check_time'],
+      // Older folders may predate the column; SELECT * omits it there.
+      chapterCount: _optionalInt(row, 'chapter_count'),
     );
+
+int? _optionalInt(Row row, String column) {
+  if (!row.keys.contains(column)) return null;
+  final value = row[column];
+  return value is int ? value : null;
+}

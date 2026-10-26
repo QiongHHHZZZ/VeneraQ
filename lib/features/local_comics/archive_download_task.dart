@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:isolate';
 
 import 'package:flutter_saf/flutter_saf.dart';
-import 'package:venera_next/features/comic_storage/comic_storage.dart';
+import 'package:venera_next/foundation/comic_storage.dart';
 import 'package:venera_next/foundation/app.dart';
 import 'package:venera_next/features/comic_source/comic_source_api.dart';
 import 'package:venera_next/foundation/comic_type.dart';
@@ -165,6 +165,17 @@ class ArchiveDownloadTask extends DownloadTask {
   @override
   double get progress =>
       _expectedBytes == 0 ? 0 : _currentBytes / _expectedBytes;
+
+  /// Byte progress rather than pages: an archive arrives as one stream, so
+  /// there is no per-page count to report before extraction.
+  @override
+  String get progressLabel =>
+      "${bytesToReadableString(_currentBytes)}/${bytesToReadableString(_expectedBytes)}";
+
+  /// A single archive has no chapters to break down until it is extracted, so
+  /// the queue shows the task itself rather than an expandable list.
+  @override
+  List<DownloadChapterProgress> get chapterProgress => const [];
 
   @override
   void resume() {

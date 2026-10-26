@@ -165,24 +165,25 @@ class FavoriteItemWithUpdateInfo extends FavoriteItem {
 
   DateTime? lastCheckTime;
 
-  bool hasNewUpdate;
+  /// Chapters the source reported during the last check, when known.
+  final int? chapterCount;
 
   FavoriteItemWithUpdateInfo(
     FavoriteItem item,
     this.updateTime,
-    this.hasNewUpdate,
-    int? lastCheckTime,
-  ) : lastCheckTime = lastCheckTime == null
-          ? null
-          : DateTime.fromMillisecondsSinceEpoch(lastCheckTime),
-      super(
-        id: item.id,
-        name: item.name,
-        coverPath: item.coverPath,
-        author: item.author,
-        type: item.type,
-        tags: item.tags,
-      );
+    int? lastCheckTime, {
+    this.chapterCount,
+  }) : lastCheckTime = lastCheckTime == null
+           ? null
+           : DateTime.fromMillisecondsSinceEpoch(lastCheckTime),
+       super(
+         id: item.id,
+         name: item.name,
+         coverPath: item.coverPath,
+         author: item.author,
+         type: item.type,
+         tags: item.tags,
+       );
 
   @override
   String get description {
@@ -191,15 +192,26 @@ class FavoriteItemWithUpdateInfo extends FavoriteItem {
     return "$updateTime | $sourceName";
   }
 
+  /// Keeps the update fields, which callers read to decide what to clear.
+  @override
+  FavoriteItemWithUpdateInfo detached() => FavoriteItemWithUpdateInfo(
+    super.detached(),
+    updateTime,
+    lastCheckTime?.millisecondsSinceEpoch,
+    chapterCount: chapterCount,
+  );
+
   @override
   operator ==(Object other) {
     return other is FavoriteItemWithUpdateInfo &&
         other.updateTime == updateTime &&
-        other.hasNewUpdate == hasNewUpdate &&
+            other.chapterCount == chapterCount &&
         super == other;
   }
 
   @override
   int get hashCode =>
-      super.hashCode ^ updateTime.hashCode ^ hasNewUpdate.hashCode;
+      super.hashCode ^
+      updateTime.hashCode ^
+        chapterCount.hashCode;
 }

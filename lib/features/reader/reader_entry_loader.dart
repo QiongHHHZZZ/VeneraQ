@@ -2,6 +2,7 @@ import 'package:venera_next/features/comic_source/comic_source_api.dart';
 import 'package:venera_next/features/history/history_api.dart';
 import 'package:venera_next/features/local_comics/local_comics_api.dart';
 import 'package:venera_next/foundation/comic_type.dart';
+import 'package:venera_next/foundation/history_contract.dart';
 import 'package:venera_next/foundation/res.dart';
 import 'package:venera_next/network/request_scope.dart';
 
@@ -42,8 +43,7 @@ class ReaderEntryLoader {
           cid: id,
           name: localComic.title,
           chapters: localComic.chapters,
-          history:
-              history ?? History.fromModel(model: localComic, ep: 0, page: 0),
+          history: _resumeHistory(history, localComic),
           author: localComic.subtitle,
           tags: localComic.tags,
         ),
@@ -58,13 +58,21 @@ class ReaderEntryLoader {
         cid: id,
         name: comic.data.title,
         chapters: comic.data.chapters,
-        history:
-            history ?? History.fromModel(model: comic.data, ep: 0, page: 0),
+        history: _resumeHistory(history, comic.data),
         author: comic.data.findAuthor() ?? '',
         tags: comic.data.plainTags,
       ),
     );
   }
+
+  /// The progress snapshot the reader starts from.
+  ///
+  /// An entry may carry only the durable position when its history row was
+  /// cleared, so metadata from the loaded comic is layered underneath it.
+  /// Without that, writing progress would insert a titleless, coverless history
+  /// row. [History.resume] owns that merge for every reader entry point.
+  static History _resumeHistory(History? stored, HistoryMixin model) =>
+      History.resume(stored, model);
 }
 
 class ReaderProps {

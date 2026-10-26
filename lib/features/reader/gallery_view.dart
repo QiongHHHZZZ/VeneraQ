@@ -8,13 +8,11 @@ import 'package:venera_next/features/reader/image_downloads.dart';
 import 'package:venera_next/features/reader/image_precache.dart';
 import 'package:venera_next/foundation/image_work.dart';
 import 'package:venera_next/features/reader/comic_image.dart';
-import 'package:venera_next/features/reader/auto_reading.dart';
 import 'package:venera_next/foundation/context.dart';
 import 'package:venera_next/foundation/image_provider/reader_image.dart';
 
 import 'gallery_data.dart';
 import 'display_image_provider.dart';
-import 'image_dimensions.dart';
 import 'image_position.dart';
 import 'reader_controller.dart';
 import 'reader_viewport.dart';
@@ -28,11 +26,8 @@ class ReaderGalleryView extends StatefulWidget {
     required this.onViewportChanged,
     required this.onReady,
     required this.onPageReported,
-    required this.onChapterChanged,
-    required this.onCollectImage,
     required this.readerSize,
     required this.readImage,
-    this.commentsBuilder,
   });
 
   final ReaderGalleryData data;
@@ -41,22 +36,16 @@ class ReaderGalleryView extends StatefulWidget {
   final void Function(ReaderImageViewController viewport, bool attached)
   onViewportChanged;
   final VoidCallback onReady;
-  final void Function(bool comments, bool refreshEInk) onPageReported;
-  final VoidCallback onChapterChanged;
-  final VoidCallback onCollectImage;
+  final VoidCallback onPageReported;
   final Size Function() readerSize;
   final Future<Uint8List?> Function(ReaderImageAddress image) readImage;
-  final WidgetBuilder? commentsBuilder;
 
   @override
   State<ReaderGalleryView> createState() => GalleryModeState();
 }
 
 class GalleryModeState extends State<ReaderGalleryView>
-    implements
-        ReaderImageViewController,
-        AutoReadingViewport,
-        AutoReadingImageViewport {
+    implements ReaderImageViewController {
   late var _imageDownloads = ReaderImageDownloads(work: widget.imageWork);
   late var _imagePrecache = ReaderImagePrecache(work: widget.imageWork);
 
@@ -67,8 +56,7 @@ class GalleryModeState extends State<ReaderGalleryView>
   int get page => navigation.state.page;
   int get preCacheCount => data.preloadCount;
   final photoViewControllers = <int, PhotoViewController>{};
-  int get totalPages => data.totalPages;
-  bool isChapterCommentsPage(int pageIndex) => data.isCommentsPage(pageIndex);
+  int get imagePages => data.imagePages;
 
   // Preserve the legacy gallery contract: image processing receives the current
   // display page, including for prefetch, rather than the source image index.
@@ -84,7 +72,6 @@ class GalleryModeState extends State<ReaderGalleryView>
       ReaderDisplayImageProvider(_imageProvider(key), widget.imageWork);
 
   final imageStates = <State<ComicImage>, int>{};
-  final _singleImageStates = <int, AutoReadingImageState>{};
 
   bool isLongPressing = false;
   bool _disposed = false;
@@ -105,10 +92,6 @@ class GalleryModeState extends State<ReaderGalleryView>
   @override
   void didUpdateWidget(covariant ReaderGalleryView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!identical(oldWidget.data.content, data.content) ||
-        !identical(oldWidget.imageWork, widget.imageWork)) {
-      _singleImageStates.clear();
-    }
     if (!identical(oldWidget.imageWork, widget.imageWork)) {
       unawaited(_imageDownloads.dispose());
       unawaited(_imagePrecache.dispose());
@@ -133,61 +116,6 @@ class GalleryModeState extends State<ReaderGalleryView>
     super.dispose();
   }
 
-  @override
-  bool get autoReadingReady =>
-      autoReadingImages.state == AutoReadingImageState.ready;
-
-  @override
-  AutoReadingImageReadiness get autoReadingImages {
-    final identity = (data.content, widget.imageWork, page);
-    AutoReadingImageReadiness result(AutoReadingImageState state) =>
-        AutoReadingImageReadiness(state, identity);
-    if (_disposed ||
-        !mounted ||
-        !controller.hasClients ||
-        fingers > 0 ||
-        isLongPressing ||
-        controller.position.isScrollingNotifier.value) {
-      return result(AutoReadingImageState.blocked);
-    }
-    if (data.isCommentsPage(page)) return result(AutoReadingImageState.ready);
-    final photo = photoViewControllers[page];
-    final initialScale = photo?.getInitialScale?.call();
-    if (initialScale != null &&
-        ((photo?.scale ?? initialScale) - initialScale).abs() > 0.01) {
-      return result(AutoReadingImageState.blocked);
-    }
-    final (start, end) = getPageImagesRange(page);
-    if (end - start == 1) {
-      final observed = data.showImageDimensions || data.observeImageReadiness;
-      return result(
-        observed
-            ? _singleImageStates[page] ?? AutoReadingImageState.loading
-            : initialScale == null
-            ? AutoReadingImageState.loading
-            : AutoReadingImageState.ready,
-      );
-    }
-    final visible = imageStates.entries
-        .where((entry) => entry.value >= start && entry.value < end)
-        .map((entry) => entry.key)
-        .whereType<ComicImageState>()
-        .where((image) => image.visibleInReader)
-        .toList();
-    return result(
-      combineAutoReadingImageStates(
-        visible.map((image) => image.autoReadingImageState),
-      ),
-    );
-  }
-
-  @override
-  AutoReadingStep autoScroll(
-    double distance, {
-    required bool acrossChapters,
-    bool skipUnavailableImages = false,
-  }) => AutoReadingStep.finished;
-
   /// Get the range of images for the given page. [page] is 1-based.
   (int start, int end) getPageImagesRange(int page) =>
       data.layout.imageRange(page, data.images.length);
@@ -205,10 +133,7 @@ class GalleryModeState extends State<ReaderGalleryView>
 
   void cache(int startPage) {
     for (int i = startPage - 1; i <= startPage + preCacheCount; i++) {
-      if (i == startPage ||
-          i <= 0 ||
-          i > totalPages ||
-          isChapterCommentsPage(i)) {
+      if (i == startPage || i <= 0 || i > imagePages) {
         continue;
       }
       _cachePage(i, i == startPage + 1 || i == startPage - 1);
@@ -216,7 +141,6 @@ class GalleryModeState extends State<ReaderGalleryView>
   }
 
   void _cachePage(int page, bool shouldPreCache) {
-    if (isChapterCommentsPage(page)) return;
     var (startIndex, endIndex) = getPageImagesRange(page);
     for (int i = startIndex; i < endIndex; i++) {
       final key = data.images[i];
@@ -268,7 +192,7 @@ class GalleryModeState extends State<ReaderGalleryView>
         child: PageView.builder(
           reverse: data.reverse,
           scrollDirection: data.vertical ? Axis.vertical : Axis.horizontal,
-          itemCount: totalPages + 2,
+          itemCount: imagePages + 2,
           controller: controller,
           itemBuilder: (context, index) => _buildPhotoPage(context, index),
           onPageChanged: (i) {
@@ -278,7 +202,6 @@ class GalleryModeState extends State<ReaderGalleryView>
                 !identical(navigation, originalNavigation)) {
               return;
             }
-            var shouldRefreshEInk = false;
             if (i == 0) {
               if (data.firstChapter ||
                   !navigation.toChapter(
@@ -286,28 +209,15 @@ class GalleryModeState extends State<ReaderGalleryView>
                     toLastPage: true,
                   )) {
                 controller.jumpToPage(1);
-              } else {
-                shouldRefreshEInk = true;
               }
-            } else if (i == totalPages + 1) {
+            } else if (i == imagePages + 1) {
               if (data.lastChapter ||
                   !navigation.toChapter(navigation.state.chapter + 1)) {
-                controller.jumpToPage(totalPages);
-              } else {
-                shouldRefreshEInk = true;
+                controller.jumpToPage(imagePages);
               }
             } else {
-              final previousPage = page;
               navigation.reportPage(i);
-              shouldRefreshEInk =
-                  page != previousPage && !isChapterCommentsPage(i);
-              widget.onPageReported(
-                isChapterCommentsPage(i),
-                shouldRefreshEInk,
-              );
-            }
-            if (shouldRefreshEInk && (i == 0 || i == totalPages + 1)) {
-              widget.onChapterChanged();
+              widget.onPageReported();
             }
             // Kept-alive neighbours reset when entered again, after their old
             // PhotoView subtree has actually unmounted.
@@ -322,7 +232,7 @@ class GalleryModeState extends State<ReaderGalleryView>
 
   Widget _buildPhotoPage(BuildContext context, int index) {
     final decoration = BoxDecoration(color: context.colorScheme.surface);
-    if (index == 0 || index == totalPages + 1) {
+    if (index == 0 || index == imagePages + 1) {
       return ClipRect(
         child: PhotoView.customChild(
           backgroundDecoration: decoration,
@@ -330,16 +240,6 @@ class GalleryModeState extends State<ReaderGalleryView>
         ),
       );
     }
-    if (isChapterCommentsPage(index)) {
-      return ClipRect(
-        child: PhotoView.customChild(
-          backgroundDecoration: decoration,
-          child: widget.commentsBuilder?.call(context) ?? const SizedBox(),
-        ),
-      );
-    }
-    final originalContent = data.content;
-    final originalWork = widget.imageWork;
     final (start, end) = getPageImagesRange(index);
     final images = List.generate(end - start, (i) => start + i);
     cache(index);
@@ -382,21 +282,7 @@ class GalleryModeState extends State<ReaderGalleryView>
               },
             ),
           );
-          return data.showImageDimensions || data.observeImageReadiness
-              ? ReaderImageDimensions(
-                  image: image,
-                  showDimensions: data.showImageDimensions,
-                  onLoadState: (state) {
-                    if (mounted &&
-                        !_disposed &&
-                        identical(originalContent, data.content) &&
-                        identical(originalWork, widget.imageWork)) {
-                      _singleImageStates[index] = state;
-                    }
-                  },
-                  builder: photo,
-                )
-              : photo();
+          return photo();
         }
         return PhotoView.customChild(
           backgroundDecoration: decoration,
@@ -449,7 +335,6 @@ class GalleryModeState extends State<ReaderGalleryView>
             width: double.infinity,
             height: double.infinity,
             image: _displayImage(data.images[images[0]]),
-            showImageDimensions: data.showImageDimensions,
             fit: BoxFit.contain,
             alignment: axis == Axis.vertical
                 ? Alignment.bottomCenter
@@ -463,7 +348,6 @@ class GalleryModeState extends State<ReaderGalleryView>
             width: double.infinity,
             height: double.infinity,
             image: _displayImage(data.images[images[1]]),
-            showImageDimensions: data.showImageDimensions,
             fit: BoxFit.contain,
             alignment: axis == Axis.vertical
                 ? Alignment.topCenter
@@ -479,7 +363,6 @@ class GalleryModeState extends State<ReaderGalleryView>
         return Expanded(
           child: ComicImage(
             image: imageProvider,
-            showImageDimensions: data.showImageDimensions,
             fit: BoxFit.contain,
             onInit: (state) => imageStates[state] = imageIndex,
             onDispose: (state) => imageStates.remove(state),
@@ -520,10 +403,6 @@ class GalleryModeState extends State<ReaderGalleryView>
   @override
   void handleDoubleTap(Offset location) {
     if (_disposed || !mounted) return;
-    if (data.doubleTapCollect) {
-      widget.onCollectImage();
-      return;
-    }
     photoViewControllers[page]?.onDoubleClick?.call();
   }
 
@@ -537,16 +416,13 @@ class GalleryModeState extends State<ReaderGalleryView>
     if (photoViewController == null || initial == null) return;
     _longPressController = photoViewController;
     final target = initial * 1.75;
-    var size = widget.readerSize();
-    Offset zoomPosition;
-    if (!data.centerLongPressZoom) {
-      zoomPosition = Offset(
-        size.width / 2 - location.dx,
-        size.height / 2 - location.dy,
-      );
-    } else {
-      zoomPosition = Offset(0, 0);
-    }
+    // Long press always zooms at the press position; the removed
+    // `longPressZoomPosition` choice no longer applies.
+    final size = widget.readerSize();
+    final zoomPosition = Offset(
+      size.width / 2 - location.dx,
+      size.height / 2 - location.dy,
+    );
     photoViewController.animateScale?.call(target, zoomPosition);
     isLongPressing = true;
   }

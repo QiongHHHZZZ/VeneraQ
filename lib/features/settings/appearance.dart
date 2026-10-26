@@ -50,6 +50,42 @@ class _AppearanceSettingsState extends State<AppearanceSettings> {
             appNavigation.forceRebuild();
           },
         ).toSliver(),
+        // The interface language is an appearance preference, so it shares this
+        // page instead of a "Language & Security" destination of its own.
+        SelectSetting.preference(
+          title: "Language".tl,
+          preference: AppPreferences.language,
+          optionTranslation: const {
+            "system": "System",
+            "zh-CN": "简体中文",
+            "zh-TW": "繁體中文",
+            "en-US": "English",
+          },
+          onChanged: () {
+            appNavigation.forceRebuild();
+          },
+        ).toSliver(),
+        // Which screen the app opens on belongs with the shell's other
+        // presentation choices, not with how comics are discovered.
+        SelectSetting.preference(
+          title: "Initial Page".tl,
+          preference: DiscoveryPreferences.initialPage,
+          optionTranslation: {
+            '0': "Home".tl,
+            '1': "Discover".tl,
+            '2': "Settings".tl,
+          },
+        ).toSliver(),
+        // Named for the result rather than for a toggle: a "reverse" switch made
+        // the reader translate before choosing.
+        SelectSetting.preference(
+          title: "Chapter order".tl,
+          preference: AppPreferences.chapterOrder,
+          optionTranslation: {
+            'ascending': "Ascending".tl,
+            'descending': "Descending".tl,
+          },
+        ).toSliver(),
       ],
     );
   }

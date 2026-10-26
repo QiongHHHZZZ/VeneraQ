@@ -24,6 +24,55 @@ class DownloadQueue {
 
   bool get isSuspended => _suspension != null;
 
+  /// Set while downloads must not run because the connection is metered.
+  ///
+  /// Unlike [suspend] this is a reversible policy block, not an ownership
+  /// handover: the queue keeps its dismissed tasks and simply stops starting
+  /// them until the flag clears again.
+  bool get isNetworkBlocked => _networkBlocked;
+  bool _networkBlocked = false;
+
+  /// Pause running work and stop admitting starts while the network is metered.
+  /// Clearing it lets the head of the queue continue where it stopped.
+  void setNetworkBlocked(bool blocked) {
+    if (_networkBlocked == blocked) return;
+    _networkBlocked = blocked;
+    final first = tasks.firstOrNull;
+    if (blocked) {
+      if (first != null && !first.isPaused) {
+        _revision++;
+        _scheduledResumeRevision = null;
+        _stopBeforeScheduling(first, first.pause);
+        notifyChanged();
+      }
+      return;
+    }
+    if (first == null || _suspension != null) return;
+    // Stopping is asynchronous: the task's own cleanup still has to settle
+    // before it may run again. Join that barrier, then continue the head.
+    final stopped = _pendingStop;
+    if (stopped != null) {
+      unawaited(
+        stopped.then<void>(
+          (_) => _resumeBlockedHead(),
+          onError: (Object _) => _resumeBlockedHead(),
+        ),
+      );
+      return;
+    }
+    _resumeBlockedHead();
+  }
+
+  void _resumeBlockedHead() {
+    if (_networkBlocked || _suspension != null) return;
+    final first = tasks.firstOrNull;
+    if (first == null || !first.isPaused) return;
+    final revision = ++_revision;
+    _scheduledResumeRevision = revision;
+    notifyChanged();
+    _resumeIfUnchanged(revision);
+  }
+
   final List<DownloadTask> _tasks = [];
   late final List<DownloadTask> tasks = UnmodifiableListView(_tasks);
   final _completing = Set<DownloadTask>.identity();
@@ -96,6 +145,12 @@ class DownloadQueue {
   void _resumeIfUnchanged(int revision) {
     // A nested queue operation owns the final scheduling decision.
     if (_suspension != null || revision != _revision) return;
+    // A metered connection must not start anything, even though nothing else
+    // about the queue changed.
+    if (_networkBlocked) {
+      _scheduledResumeRevision = null;
+      return;
+    }
     final stop = _pendingStop;
     if (stop == null) {
       _scheduledResumeRevision = null;

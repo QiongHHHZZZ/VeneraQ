@@ -7,7 +7,6 @@ import 'package:url_launcher/url_launcher_string.dart';
 import 'package:venera_next/components/appbar.dart';
 import 'package:venera_next/components/scroll.dart';
 import 'package:venera_next/features/settings/setting_components.dart';
-import 'package:venera_next/features/settings/sponsors.dart';
 import 'package:venera_next/foundation/app.dart';
 import 'package:venera_next/foundation/context.dart';
 import 'package:venera_next/foundation/translations.dart';
@@ -86,9 +85,7 @@ class _AboutSettingsState extends State<AboutSettings> {
           children: [
             const SizedBox(height: 8),
             Text("V${App.version}", style: const TextStyle(fontSize: 16)),
-            Text(
-              "VeneraQ is a free and open-source comic reader.".tl,
-            ),
+            Text("VeneraQ is a free and open-source comic reader.".tl),
             const SizedBox(height: 8),
           ],
         ).toSliver(),
@@ -123,13 +120,6 @@ class _AboutSettingsState extends State<AboutSettings> {
           trailing: const Icon(Icons.open_in_new),
           onTap: () {
             launchUrlString("https://github.com/VeneraQ/VeneraQ");
-          },
-        ).toSliver(),
-        ListTile(
-          title: Text("Sponsors".tl),
-          trailing: const Icon(Icons.keyboard_arrow_right),
-          onTap: () {
-            context.to(() => const SponsorsPage());
           },
         ).toSliver(),
       ],

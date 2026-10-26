@@ -1,21 +1,15 @@
-import 'package:venera_next/features/history/image_favorites.dart';
 import 'package:venera_next/features/favorites/favorites_manager.dart';
 import 'package:venera_next/features/history/history_scope.dart';
 import 'package:venera_next/features/favorites/favorites_scope.dart';
 import 'package:venera_next/features/history/history_manager.dart';
-import 'package:venera_next/app_runtime/data_sync.dart';
 import 'package:venera_next/app_runtime/bootstrap_core.dart';
 import 'package:venera_next/app_runtime/core_bootstrap.dart';
 import 'package:venera_next/app_runtime/application_host.dart';
 import 'package:venera_next/app_runtime/application_updates.dart';
 import 'package:venera_next/components/application_update_prompt.dart';
 import 'package:venera_next/app_runtime/image_loading.dart';
-import 'package:venera_next/app_runtime/follow_updates.dart';
-import 'package:venera_next/app_runtime/webdav_library.dart';
 import 'package:venera_next/features/reader/reader.dart'
     show ReaderPlatformEffectsScope, ReaderSessionScope;
-import 'package:venera_next/features/follow_updates/follow_updates.dart';
-import 'package:venera_next/app_runtime/background_sync.dart';
 import 'package:venera_next/app_runtime/interactive_platform_bindings.dart';
 import 'package:venera_next/app_runtime/window_placement.dart';
 import 'package:venera_next/foundation/global_preference_store.dart';
@@ -35,6 +29,7 @@ import 'package:venera_next/foundation/file_interaction.dart';
 import 'components/gesture.dart';
 import 'components/js_ui.dart';
 import 'components/message.dart';
+import 'components/splash_overlay.dart';
 import 'components/window_frame.dart';
 import 'components/window_selection_task.dart';
 import 'foundation/app.dart';
@@ -43,8 +38,6 @@ import 'foundation/app_locale.dart';
 import 'foundation/appdata.dart';
 import 'foundation/context.dart';
 import 'foundation/js_engine.dart';
-import 'features/webdav_library/webdav_library.dart';
-import 'features/sync/sync.dart';
 import 'features/comic_source/comic_source_api.dart';
 import 'features/comic_source/comic_source_ui.dart';
 import 'features/comic_source/source_repositories.dart';
@@ -64,20 +57,25 @@ void main(List<String> args) {
           showToast(message: message, context: context);
         });
         JsEngine().bindUiMessageHandler(JsUiApi());
-        final sync = createApplicationDataSync();
-        final core = createCoreBootstrap(onDataChanged: sync.onDataChanged);
+        final core = createCoreBootstrap();
         try {
           await init(core);
         } catch (error, stack) {
           await rollbackCoreStartup(
-            [
-              (name: 'sync', close: sync.closeAndWait),
-              (name: 'core', close: core.close),
-            ],
+            [(name: 'core', close: core.close)],
             error,
             stack,
           );
           Error.throwWithStackTrace(error, stack);
+        }
+        try {
+          await SourceRepositories.instance.seedDefaults();
+        } catch (error, stack) {
+          Log.error(
+            "Source repositories",
+            "Failed to add default repositories: $error",
+            stack,
+          );
         }
         final placement = App.isDesktop
             ? WindowPlacementHost.platform(
@@ -88,7 +86,6 @@ void main(List<String> args) {
             : null;
         final host = ApplicationHost(
           core: core,
-          sync: sync,
           placement: placement,
           sourceInstallations: SourceInstallations(
             manager: ComicSourceManager(),
@@ -97,8 +94,7 @@ void main(List<String> args) {
           ),
         );
         runApp(MyApp(host: host));
-        await placement?.initialize();
-      },
+        await placement?.initialize();      },
       (error, stack) {
         Log.error("Unhandled Exception", error, stack);
       },
@@ -117,14 +113,10 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
-  late final _library = webDavLibrary;
   late final _interactiveBindings = createPlatformInteractiveBindings(
     placement: widget.host.placement?.attach(),
   );
-  late final _dataSync = widget.host.sync;
   ApplicationMount? _mount;
-  late final _followUpdates = createFollowUpdatesRuntime(_dataSync);
-  late final _backgroundSync = BackgroundSync.platform(_dataSync);
   late final _startupUpdates = createStartupUpdateCheck(
     sources: widget.host.sourceUpdates,
     checkApplication: (scope) async {
@@ -147,22 +139,17 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     if (widget.host.isClosing) return;
     _mount = widget.host.attach(
       stop: () {
-        _backgroundSync.stop();
         _startupUpdates.cancel();
       },
       close: () => closeApplicationMountBindings(
-        followUpdates: _followUpdates,
         interactive: _interactiveBindings,
         closeStartupUpdates: _startupUpdates.closeAndWait,
       ),
     );
-    mountWebDavLibrary(_library);
     appNavigation.registerForceRebuild(forceRebuild);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && !widget.host.isClosing) {
         _interactiveBindings.start();
-        _backgroundSync.start();
-        _followUpdates.start();
         unawaited(
           _startupUpdates.start().catchError((Object error, StackTrace stack) {
             Log.error('Startup update check', error, stack);
@@ -181,8 +168,6 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     }
     WidgetsBinding.instance.removeObserver(this);
     appNavigation.registerForceRebuild(null);
-    hideContentOverlay?.remove();
-    hideContentOverlay = null;
     unawaited(
       _mount!.closeAndWait().catchError((Object error, StackTrace stack) {
         Log.error('Interactive bindings', error, stack);
@@ -190,10 +175,6 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     );
     super.dispose();
   }
-
-  bool isAuthPageActive = false;
-
-  OverlayEntry? hideContentOverlay;
 
   @override
   void didChangeLocales(List<Locale>? locales) {
@@ -207,47 +188,6 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (widget.host.isClosing) return;
-    if (state == AppLifecycleState.resumed) {
-      _dataSync.checkForAutomaticSync();
-      _library.source.synchronizer.checkForAutomaticSync();
-    }
-    if (!App.isMobile ||
-        !GlobalPreferenceStore(
-          appdata.settings,
-        ).read(AppPreferences.authorizationRequired)) {
-      return;
-    }
-    if (state == AppLifecycleState.inactive && hideContentOverlay == null) {
-      hideContentOverlay = OverlayEntry(
-        builder: (context) {
-          return Positioned.fill(
-            child: Container(
-              width: double.infinity,
-              height: double.infinity,
-              color: appNavigation.rootContext.colorScheme.surface,
-            ),
-          );
-        },
-      );
-      Overlay.of(appNavigation.rootContext).insert(hideContentOverlay!);
-    } else if (hideContentOverlay != null &&
-        state == AppLifecycleState.resumed) {
-      hideContentOverlay!.remove();
-      hideContentOverlay = null;
-    }
-    if (state == AppLifecycleState.hidden &&
-        !isAuthPageActive &&
-        !IO.isSelectingFiles) {
-      isAuthPageActive = true;
-      appNavigation.rootContext.to(
-        () => AuthPage(
-          onSuccessfulAuth: () {
-            appNavigation.rootContext.pop();
-            isAuthPageActive = false;
-          },
-        ),
-      );
-    }
     super.didChangeAppLifecycleState(state);
   }
 
@@ -343,18 +283,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         home: const SizedBox.expand(),
       );
     }
-    Widget home;
-    if (GlobalPreferenceStore(
-      appdata.settings,
-    ).read(AppPreferences.authorizationRequired)) {
-      home = AuthPage(
-        onSuccessfulAuth: () {
-          appNavigation.rootContext.toReplacement(() => const MainPage());
-        },
-      );
-    } else {
-      home = const MainPage();
-    }
+    const home = MainPage();
     return DynamicColorBuilder(
       builder: (light, dark) {
         Color? primary, secondary, tertiary;
@@ -404,7 +333,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
               );
             };
             if (widget != null) {
-              /// 如果无法检测到状态栏高度设定指定高度
+              /// 濡傛灉鏃犳硶妫€娴嬪埌鐘舵€佹爮楂樺害璁惧畾鎸囧畾楂樺害
               /// https://github.com/flutter/flutter/issues/161086
               var isPaddingCheckError =
                   MediaQuery.of(context).viewPadding.top <= 0 ||
@@ -422,11 +351,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
               widget = FavoritesScope(
                 manager: LocalFavoritesManager(),
-                child: HistoryScope(
-                  manager: HistoryManager(),
-                  imageFavorites: ImageFavoriteManager(),
-                  child: widget,
-                ),
+                child: HistoryScope(manager: HistoryManager(), child: widget),
               );
               widget = ReaderPlatformEffectsScope(child: OverlayWidget(widget));
               if (App.isDesktop) {
@@ -439,16 +364,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
                     child: MouseBackDetector(
                       onTapDown: appNavigation.pop,
                       child: SyncWindowBinding(
-                        controller: _dataSync,
                         waitForHistoryWrites:
                             HistoryManager().waitForAsyncWrites,
                         isFinalizing: () => this.widget.host.isClosing,
                         prepareInteractive: _interactiveBindings.prepareForExit,
-                        prepareFollowUpdates: () =>
-                            prepareApplicationFollowUpdatesForExit(
-                              _followUpdates,
-                            ),
-                        prepareWebDavLibrary: _library.source.prepareForExit,
                         prepareImages: prepareImageLoadingForExit,
                         cancelStartupUpdates: _startupUpdates.cancel,
                         closeStartupUpdates: _startupUpdates.closeAndWait,
@@ -461,24 +380,18 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
                   isFinalizing: () => this.widget.host.isClosing,
                 );
               }
-              widget = FollowUpdatesScope(
-                runtime: _followUpdates,
-                child: widget,
-              );
               widget = SelectionTasksScope(
                 registry: this.widget.host.selections,
                 child: widget,
               );
               widget = ReaderSessionScope(
-                onClosed: _dataSync.onDataChanged,
+                onClosed: forceRebuild,
                 child: widget,
               );
-              widget = DataSyncScope(controller: _dataSync, child: widget);
               widget = ApplicationUpdateScope(
                 service: this.widget.host.applicationUpdates,
                 child: widget,
               );
-              widget = WebDavLibraryScope(services: _library, child: widget);
               final installations = this.widget.host.sourceInstallations;
               if (installations != null) {
                 widget = SourceInstallationsScope(
@@ -487,6 +400,12 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
                   refresh: forceRebuild,
                   child: widget,
                 );
+              }
+              // The launch sequence is composed outermost so it covers every
+              // scope below it and starts from the very first frame the platform
+              // hands us. It removes itself once the hand-off fade completes.
+              if (SplashOverlay.isEnabled) {
+                widget = SplashOverlay(child: widget);
               }
               return _SystemUiProvider(
                 Material(

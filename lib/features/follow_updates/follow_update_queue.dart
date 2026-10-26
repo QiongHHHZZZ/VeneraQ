@@ -2,15 +2,21 @@ import 'dart:async';
 
 import 'package:venera_next/network/request_scope.dart';
 
+/// Defaults for the single-folder queue: a small batch, at most two requests
+/// per source, spaced so one source never sees a burst.
+const int defaultFollowUpdateConcurrency = 5;
+const int defaultFollowUpdatePerSourceConcurrency = 2;
+const Duration defaultFollowUpdateSourceInterval = Duration(milliseconds: 500);
+
 /// Keep unrelated sources moving while spacing requests to the same source.
 Future<void> runFollowUpdateTasks<T>(
   List<T> tasks, {
   required String Function(T) sourceKey,
   required Future<void> Function(T) run,
   required RequestScope scope,
-  int concurrency = 5,
-  int perSourceConcurrency = 2,
-  Duration sourceInterval = const Duration(milliseconds: 500),
+  int concurrency = defaultFollowUpdateConcurrency,
+  int perSourceConcurrency = defaultFollowUpdatePerSourceConcurrency,
+  Duration sourceInterval = defaultFollowUpdateSourceInterval,
   DateTime Function()? now,
 }) async {
   if (concurrency < 1 || perSourceConcurrency < 1) {

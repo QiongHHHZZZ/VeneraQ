@@ -1,7 +1,4 @@
 import 'dart:async';
-import 'package:venera_next/foundation/application_preferences.dart';
-import 'package:venera_next/foundation/global_preference_store.dart';
-import 'package:venera_next/foundation/keyword_filter.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -10,11 +7,13 @@ import 'package:venera_next/components/gesture.dart';
 import 'package:venera_next/components/layout.dart';
 import 'package:venera_next/components/loading.dart';
 import 'package:venera_next/components/menu.dart';
+import 'package:venera_next/foundation/appdata.dart';
+import 'package:venera_next/foundation/application_preferences.dart';
+import 'package:venera_next/foundation/global_preference_store.dart';
 import 'package:venera_next/components/message.dart';
 import 'package:venera_next/components/scroll.dart';
 import 'package:venera_next/features/comic_source/comic_source_api.dart';
 import 'package:venera_next/routing/app_navigation.dart';
-import 'package:venera_next/foundation/appdata.dart';
 import 'package:venera_next/foundation/context.dart';
 import 'package:venera_next/foundation/res.dart';
 import 'package:venera_next/foundation/extensions.dart';
@@ -34,6 +33,7 @@ class SliverGridComics extends StatefulWidget {
     this.onLongPressed,
     this.selections,
     this.useFavoriteDisplaySettings = false,
+    this.tileScale,
   });
 
   final List<Comic> comics;
@@ -51,6 +51,10 @@ class SliverGridComics extends StatefulWidget {
   final void Function(Comic, int heroID)? onLongPressed;
 
   final bool useFavoriteDisplaySettings;
+
+  /// Explicit tile scale for callers that own their own size setting, such as
+  /// the home shelf, so Explore's cover size does not resize it.
+  final double? tileScale;
 
   @override
   State<SliverGridComics> createState() => _SliverGridComicsState();
@@ -71,21 +75,9 @@ class _SliverGridComicsState extends State<SliverGridComics> {
 
   @override
   void didUpdateWidget(covariant SliverGridComics oldWidget) {
-    if (oldWidget.useFavoriteDisplaySettings !=
-        widget.useFavoriteDisplaySettings) {
-      if (widget.useFavoriteDisplaySettings) {
-        appdata.settings.addListener(_onSettingsChanged);
-      } else {
-        appdata.settings.removeListener(_onSettingsChanged);
-      }
-    }
     if (!comics.isEqualTo(widget.comics)) {
       comics.clear();
-      for (var comic in widget.comics) {
-        if (isBlocked(comic) == null) {
-          comics.add(comic);
-        }
-      }
+      comics.addAll(widget.comics);
       generateHeroID();
     }
     super.didUpdateWidget(oldWidget);
@@ -93,25 +85,21 @@ class _SliverGridComicsState extends State<SliverGridComics> {
 
   @override
   void initState() {
-    for (var comic in widget.comics) {
-      if (isBlocked(comic) == null) {
-        comics.add(comic);
-      }
-    }
+    comics.addAll(widget.comics);
     generateHeroID();
     addComicWidgetStateListener(update);
-    if (widget.useFavoriteDisplaySettings) {
-      appdata.settings.addListener(_onSettingsChanged);
-    }
+    // Every grid reads its tile size and display mode from settings while
+    // building, so any grid has to repaint when those change, not only the
+    // shelf. Without this the cover-size control looked inert until the page was
+    // left and re-entered.
+    appdata.settings.addListener(_onSettingsChanged);
     super.initState();
   }
 
   @override
   void dispose() {
     removeComicWidgetStateListener(update);
-    if (widget.useFavoriteDisplaySettings) {
-      appdata.settings.removeListener(_onSettingsChanged);
-    }
+    appdata.settings.removeListener(_onSettingsChanged);
     super.dispose();
   }
 
@@ -124,12 +112,16 @@ class _SliverGridComicsState extends State<SliverGridComics> {
   void update() {
     setState(() {
       comics.clear();
-      for (var comic in widget.comics) {
-        if (isBlocked(comic) == null) {
-          comics.add(comic);
-        }
-      }
+      comics.addAll(widget.comics);
     });
+  }
+
+  /// Explicit grid columns, or 0 when the count should be derived.
+  int _configuredColumns() {
+    final value = GlobalPreferenceStore(
+      appdata.settings,
+    ).read(FavoritePreferences.gridColumns);
+    return int.tryParse(value) ?? 0;
   }
 
   @override
@@ -138,7 +130,9 @@ class _SliverGridComicsState extends State<SliverGridComics> {
     final favoriteDisplayMode = widget.useFavoriteDisplaySettings
         ? (favoriteDisplayState.isGallery
               ? ComicTileDisplayMode.gallery
-              : ComicTileDisplayMode.detailed)
+              // The shelf's list is a plain compact row rather than the tall
+              // detailed card used by search and browse results.
+              : ComicTileDisplayMode.compact)
         : null;
     return _SliverGridComics(
       comics: comics,
@@ -151,9 +145,29 @@ class _SliverGridComicsState extends State<SliverGridComics> {
       onLongPressed: widget.onLongPressed,
       onBlocked: update,
       favoriteDisplayMode: favoriteDisplayMode,
+      // Auto, so the cover size is what decides how many fit. An explicit
+      // count fought the size: the count fixed the cell and the size only
+      // changed how much of it the cover filled.
+      // The column preference overrides the derived count; "auto" leaves the
+      // cover size in charge of how many fits.
       galleryColumns: favoriteDisplayMode == ComicTileDisplayMode.gallery
-          ? favoriteDisplayState.galleryColumns
+          ? _configuredColumns()
           : null,
+      // Read here rather than taken from the parent: the shelf computes this in
+      // its own build, and a dialog drawn over it does not rebuild the shelf, so
+      // a value captured there stayed stale until the dialog closed. Reading it
+      // in this build lets the settings listener repaint the grid at once. The
+      // list and the grid each keep their own value, so the one matching the
+      // arrangement on screen is the one that applies.
+      tileScale: widget.useFavoriteDisplaySettings
+          ? coverSizeScale(
+              GlobalPreferenceStore(appdata.settings).read(
+                favoriteDisplayMode == ComicTileDisplayMode.gallery
+                    ? FavoritePreferences.tileScale
+                    : FavoritePreferences.listTileScale,
+              ),
+            )
+          : widget.tileScale,
     );
   }
 }
@@ -171,6 +185,7 @@ class _SliverGridComics extends StatelessWidget {
     this.selection,
     this.favoriteDisplayMode,
     this.galleryColumns,
+    this.tileScale,
   });
 
   final List<Comic> comics;
@@ -194,6 +209,10 @@ class _SliverGridComics extends StatelessWidget {
   final ComicTileDisplayMode? favoriteDisplayMode;
 
   final int? galleryColumns;
+
+  /// Explicit tile scale, used by the home shelf so its own size setting does
+  /// not depend on the Explore value.
+  final double? tileScale;
 
   @override
   Widget build(BuildContext context) {
@@ -240,22 +259,12 @@ class _SliverGridComics extends StatelessWidget {
       }, childCount: comics.length),
       gridDelegate: SliverGridDelegateWithComics(
         galleryColumns: galleryColumns,
+        scaleOverride: tileScale,
         forceDetailed: favoriteDisplayMode == ComicTileDisplayMode.detailed,
+        forceCompact: favoriteDisplayMode == ComicTileDisplayMode.compact,
       ),
     );
   }
-}
-
-/// return the first blocked keyword, or null if not blocked
-String? isBlocked(Comic item) {
-  return KeywordFilter(
-    GlobalPreferenceStore(appdata.settings).read(KeywordPreferences.comics),
-  ).firstComicMatch(
-    title: item.title,
-    subtitle: item.subtitle,
-    description: item.description,
-    tags: item.tags ?? const [],
-  );
 }
 
 class ComicList extends StatefulWidget {
@@ -272,6 +281,7 @@ class ComicList extends StatefulWidget {
     this.reloadHandlerCallback,
     this.enablePageStorage = false,
     this.useFavoriteDisplaySettings = false,
+    this.tileScale,
   });
 
   final Future<Res<List<Comic>>> Function(int page)? loadPage;
@@ -296,6 +306,9 @@ class ComicList extends StatefulWidget {
 
   final bool useFavoriteDisplaySettings;
 
+  /// Explicit tile scale for callers that own their own size setting.
+  final double? tileScale;
+
   @override
   State<ComicList> createState() => ComicListState();
 }
@@ -317,6 +330,19 @@ class ComicListState extends State<ComicList> {
   String? _nextUrl;
 
   late bool enablePageStorage = widget.enablePageStorage;
+
+  @override
+  void initState() {
+    super.initState();
+    // The tile size and display mode are read from settings while the grid
+    // builds. Without this listener a change made in a dialog left the page
+    // showing the old size until it was left and re-entered.
+    appdata.settings.addListener(_onSettingsChanged);
+  }
+
+  void _onSettingsChanged() {
+    if (mounted) setState(() {});
+  }
 
   void _restoreState(Object? state) {
     if (state is! _ComicListSnapshot || !enablePageStorage) {
@@ -411,6 +437,7 @@ class ComicListState extends State<ComicList> {
   @override
   void dispose() {
     _generation++;
+    appdata.settings.removeListener(_onSettingsChanged);
     super.dispose();
   }
 
@@ -600,10 +627,29 @@ class ComicListState extends State<ComicList> {
 
   @override
   Widget build(BuildContext context) {
-    final type = GlobalPreferenceStore(
-      appdata.settings,
-    ).read(DiscoveryPreferences.comicListDisplayMode);
-    return type == 'paging' ? buildPagingMode() : buildContinuousMode();
+    // The list picks its own paging style from what the source provides: a
+    // source that offers a cursor loads continuously, one that only offers page
+    // numbers shows the page selector. A setting could only ever choose between
+    // two styles that the source already decided between.
+    final child = widget.loadNext != null
+        ? buildContinuousMode()
+        : buildPagingMode();
+    return RefreshIndicator(onRefresh: _pullToRefresh, child: child);
+  }
+
+  /// Reloads the first page and keeps the indicator up until it arrives.
+  ///
+  /// `refresh()` only queues the work — the first page is requested from build —
+  /// so the wait starts with a beat for that rebuild, then ends as soon as no
+  /// request is outstanding. A bounded loop keeps a request that never settles
+  /// from pinning the indicator forever.
+  Future<void> _pullToRefresh() async {
+    refresh();
+    for (var tick = 0; tick < 200; tick++) {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      if (!mounted) return;
+      if (!_loading.values.any((value) => value)) return;
+    }
   }
 
   Widget buildPagingMode() {
@@ -638,6 +684,9 @@ class ComicListState extends State<ComicList> {
     return SmoothCustomScrollView(
       key: enablePageStorage ? PageStorageKey('scroll$_page') : null,
       controller: widget.controller,
+      // An under-filled page cannot overscroll, and a pull-to-refresh needs that
+      // overscroll to start.
+      additionalPhysics: const AlwaysScrollableScrollPhysics(),
       slivers: [
         if (widget.leadingSliver != null) widget.leadingSliver!,
         if (_maxPage != 1) _buildSliverPageSelector(),
@@ -685,6 +734,9 @@ class ComicListState extends State<ComicList> {
     return SmoothCustomScrollView(
       key: enablePageStorage ? PageStorageKey('scroll$_page') : null,
       controller: widget.controller,
+      // An under-filled page cannot overscroll, and a pull-to-refresh needs that
+      // overscroll to start.
+      additionalPhysics: const AlwaysScrollableScrollPhysics(),
       slivers: [
         if (widget.leadingSliver != null) widget.leadingSliver!,
         SliverGridComics(

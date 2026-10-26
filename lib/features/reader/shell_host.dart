@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:venera_next/foundation/app.dart';
-import 'package:venera_next/foundation/appdata.dart';
 import 'reader_page.dart';
 import 'scaffold.dart';
 import 'shell_data.dart';
@@ -28,30 +27,19 @@ class ReaderShellHost extends StatelessWidget {
         vertical: reader.mode.isTopToBottom,
         gallery: reader.mode.isGallery,
         animating: reader.isPageAnimating,
-        onCommentsPage: reader.isOnChapterCommentsPage,
-        swipeToCollect:
-            appdata.settings.globalReaderSettings.quickCollectImage == 'Swipe',
         preferences: reader.preferences,
-        automaticReading: reader.autoReading.status,
       ),
       progress: reader.createProgressRequest(),
       onExit: reader.requestExit,
       onFullscreen: App.isDesktop ? reader.fullscreen : null,
-      onToggleAutomaticReading: reader.toggleAutomaticReading,
-      acquireSidebarPause: reader.acquireAutomaticReadingPause,
       readImagePickContext: reader.readImagePickContext,
       chapterNavigation: reader.chapterNavigation.action,
       imageWork: reader.imageWork,
       orientation: reader.readerOrientation,
       onRotate: App.isAndroid ? reader.cycleReaderOrientation : null,
       onSystemUiChanged: reader.updateSystemUi,
-      createChapterMenu: reader.createChapterMenu,
-      favoriteChanges: reader.imageFavorites,
-      createFavoriteQuery: reader.createImageFavoriteQuery,
-      createImageFavorite: reader.createImageFavoriteRequest,
       createImageExport: reader.createImageExportRequest,
       createSettings: reader.createSettingsRequest,
-      createChapterComments: reader.createChapterCommentsRequest,
       child: child!,
     ),
   );

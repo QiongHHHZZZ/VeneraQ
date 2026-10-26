@@ -1,17 +1,12 @@
 import 'dart:math' as math;
 import 'package:venera_next/foundation/application_preferences.dart';
 import 'package:venera_next/foundation/global_preference_store.dart';
-import 'package:venera_next/foundation/keyword_settings_store.dart';
-import 'package:venera_next/foundation/navigation_admission.dart';
-import 'package:venera_next/components/settings_save_state.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:venera_next/components/gesture.dart';
 import 'package:venera_next/components/image.dart';
 import 'package:venera_next/components/menu.dart';
-import 'package:venera_next/components/message.dart';
-import 'package:venera_next/components/select.dart';
 import 'package:venera_next/features/comic_source/comic_source_api.dart';
 import 'package:venera_next/routing/app_navigation.dart';
 import 'package:venera_next/foundation/app_locale.dart';
@@ -41,29 +36,21 @@ typedef ComicFavoriteDisplayStateResolver =
     ComicFavoriteDisplayState Function();
 
 class ComicTileState {
-  const ComicTileState({
-    this.isFavorite = false,
-    this.historyPage,
-    this.historyMaxPage,
-    this.historyDescription,
-    this.hasNewUpdate = false,
-  });
+  const ComicTileState({this.chapterCount, this.unreadChapters});
 
-  final bool isFavorite;
-  final int? historyPage;
-  final int? historyMaxPage;
-  final String? historyDescription;
-  final bool hasNewUpdate;
+  /// Chapters reported by the last update check, when known.
+  final int? chapterCount;
+
+  /// Chapters past the reader's last position, when both values are known.
+  final int? unreadChapters;
 }
 
 class ComicFavoriteDisplayState {
   const ComicFavoriteDisplayState({
     this.isGallery = false,
-    this.galleryColumns,
   });
 
   final bool isGallery;
-  final int? galleryColumns;
 }
 
 ComicPageBuilder? _comicPageBuilder;
@@ -161,16 +148,45 @@ ComicTileState _tileState(Comic comic) {
   return _comicTileStateResolver?.call(comic) ?? const ComicTileState();
 }
 
-Widget _buildUpdateBadge(BuildContext context, {double size = 24}) {
+/// Chapters past the reader's position, drawn like the small square count
+/// badge in the library: tight padding and square corners.
+///
+/// The fill uses the theme's primary container rather than a derived colour:
+/// with the default blue seed the plain primary tone reads as grey in dark
+/// mode, which made the count easy to miss. Container/onContainer keep the
+/// intended accent contrast in both brightnesses.
+///
+/// [radius] rounds the pill used by the compact list row, where the count sits
+/// beside the title instead of on the cover.
+Widget _buildUnreadBadge(
+  BuildContext context,
+  int count, {
+  double size = 24,
+  double radius = 0,
+}) {
+  final scheme = context.colorScheme;
   return Container(
     height: size,
-    width: size,
-    color: Colors.deepOrange.shade700,
-    child: Icon(Icons.update, size: size * 2 / 3, color: Colors.white),
+    constraints: BoxConstraints(minWidth: size),
+    padding: EdgeInsets.symmetric(horizontal: size * 0.14),
+    alignment: Alignment.center,
+    decoration: BoxDecoration(
+      color: scheme.primaryContainer,
+      borderRadius: BorderRadius.circular(radius),
+    ),
+    child: Text(
+      count > 999 ? '999+' : '$count',
+      style: TextStyle(
+        color: scheme.onPrimaryContainer,
+        fontSize: size * 0.5,
+        fontWeight: FontWeight.w700,
+        height: 1,
+      ),
+    ),
   );
 }
 
-enum ComicTileDisplayMode { detailed, gallery }
+enum ComicTileDisplayMode { detailed, gallery, compact }
 
 class ComicTile extends StatelessWidget {
   const ComicTile({
@@ -268,11 +284,6 @@ class ComicTile extends StatelessWidget {
           _addComicToFavorites(context, [comic]);
         },
       ),
-      MenuEntry(
-        icon: Icons.block,
-        text: 'Block'.tl,
-        onClick: () => block(context),
-      ),
       ...?menuOptions,
     ]);
   }
@@ -287,10 +298,20 @@ class ComicTile extends StatelessWidget {
     final type = switch (displayMode) {
       ComicTileDisplayMode.detailed => 'detailed',
       ComicTileDisplayMode.gallery => 'gallery',
+      ComicTileDisplayMode.compact => 'compact',
       null => GlobalPreferenceStore(
         appdata.settings,
       ).read(DiscoveryPreferences.comicDisplayMode),
     };
+
+    final state = _tileState(comic);
+    final unread = state.unreadChapters;
+
+    // The compact row keeps the unread count inside itself, on the right, so it
+    // does not use the cover overlay the other layouts share.
+    if (type == 'compact') {
+      return _buildCompactMode(context, unread);
+    }
 
     Widget child = switch (type) {
       'detailed' => _buildDetailedMode(context),
@@ -298,34 +319,26 @@ class ComicTile extends StatelessWidget {
       _ => _buildBriefMode(context),
     };
 
-    final state = _tileState(comic);
-    final isFavorite = state.isFavorite;
-    final historyPage = state.historyPage == 0 ? 1 : state.historyPage;
-    final hasUpdate = state.hasNewUpdate;
-
-    if (!isFavorite && historyPage == null && !hasUpdate) {
-      return child;
-    }
+    // Only the unread count is drawn on the cover. The favorite bookmark and the
+    // reading-progress badge used to sit here too, but they covered artwork
+    // without telling the reader anything they act on from this screen.
+    if (unread == null || unread <= 0) return child;
 
     return LayoutBuilder(
       builder: (context, constraints) {
         final compact = type == 'gallery' && constraints.maxWidth < 88;
         final badgeSize = compact ? 18.0 : 24.0;
+        // Keep the badge clear of the cover's rounded corner. At the old 6px
+        // inset it straddled the curve, so the badge looked like it was falling
+        // off the artwork on gallery tiles.
+        final inset = compact ? 6.0 : 10.0;
         return Stack(
           children: [
             Positioned.fill(child: child),
             Positioned(
-              left: type == 'detailed'
-                  ? 16
-                  : compact
-                  ? 4
-                  : 6,
-              top: compact ? 6 : 8,
-              right: type == 'detailed'
-                  ? 16
-                  : compact
-                  ? 4
-                  : 6,
+              left: type == 'detailed' ? 16 : inset,
+              top: type == 'detailed' ? 8 : inset,
+              right: type == 'detailed' ? 16 : inset,
               child: Container(
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(4),
@@ -334,35 +347,14 @@ class ComicTile extends StatelessWidget {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    if (isFavorite)
-                      Container(
-                        height: badgeSize,
-                        width: badgeSize,
-                        color: Colors.green,
-                        child: Icon(
-                          Icons.bookmark_rounded,
-                          size: badgeSize * 2 / 3,
-                          color: Colors.white,
-                        ),
-                      ),
-                    if (state.historyDescription case final description?)
-                      Flexible(child: _ReadingProgressBadge(description)),
-                    if (historyPage != null && state.historyDescription == null)
-                      Container(
-                        height: badgeSize,
-                        color: Colors.blue.toOpacity(0.9),
-                        constraints: BoxConstraints(minWidth: badgeSize),
-                        padding: EdgeInsets.symmetric(
-                          horizontal: compact ? 2 : 4,
-                        ),
-                        child: CustomPaint(
-                          painter: _ReadingHistoryPainter(
-                            historyPage,
-                            state.historyMaxPage,
-                          ),
-                        ),
-                      ),
-                    if (hasUpdate) _buildUpdateBadge(context, size: badgeSize),
+                    _buildUnreadBadge(
+                      context,
+                      unread,
+                      size: badgeSize,
+                      // Slightly rounded, matching the cover-corner badge in
+                      // the reference library rather than a sharp square.
+                      radius: badgeSize * 0.25,
+                    ),
                   ],
                 ),
               ),
@@ -442,6 +434,71 @@ class ComicTile extends StatelessWidget {
                     rating: comic.stars,
                   ),
                 ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// One short row: square cover, title, and the unread count on the right.
+  ///
+  /// Sized to the library's list row: 56dp tall with 8dp vertical padding, so
+  /// the square cover fills the remaining 40dp and the title takes the rest.
+  Widget _buildCompactMode(BuildContext context, int? unread) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Reproduces the library's list row exactly: a 56dp row with 8dp
+        // vertical padding, leaving a 40dp square cover.
+        //
+        // Both numbers matter. The shelf's grid insets each row by 4dp for its
+        // selection highlight, so the row box here is the cell minus that inset;
+        // a larger padding shrank the cover and a smaller one made it oversized
+        // against the reference.
+        final rowHeight = constraints.maxHeight;
+        final vertical = rowHeight >= 40 ? 8.0 : 2.0;
+        final side = math.max(8.0, rowHeight - vertical * 2);
+        Widget image = Container(
+          key: const ValueKey('compact-cover'),
+          width: side,
+          height: side,
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.secondaryContainer,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: buildImage(context),
+        );
+        if (heroID != null) {
+          image = Hero(tag: "cover$heroID", child: image);
+        }
+        return ClickInkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: _onTap,
+          onLongPress: enableLongPressed ? () => _onLongPressed(context) : null,
+          onSecondaryTapDown: (detail) => onSecondaryTap(detail, context),
+          child: Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16, vertical: vertical),
+            child: Row(
+              children: [
+                image,
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Text(
+                    comic.title.replaceAll('\n', ''),
+                    // A short row cannot stack two lines without overflowing.
+                    maxLines: rowHeight < 52 ? 1 : 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                ),
+                if (unread != null && unread > 0) ...[
+                  const SizedBox(width: 12),
+                  // A rounded rectangle rather than a full capsule, matching the
+                  // count badge beside a title in the reference library.
+                  _buildUnreadBadge(context, unread, size: 26, radius: 8),
+                ],
               ],
             ),
           ),
@@ -623,186 +680,9 @@ class ComicTile extends StatelessWidget {
     );
   }
 
-  List<String> _splitText(String text) {
-    // split text by comma, brackets
-    var words = <String>[];
-    var buffer = StringBuffer();
-    var inBracket = false;
-    String? prevBracket;
-    for (var i = 0; i < text.length; i++) {
-      var c = text[i];
-      if (c == '[' || c == '(') {
-        if (inBracket) {
-          buffer.write(c);
-        } else {
-          if (buffer.isNotEmpty) {
-            words.add(buffer.toString().trim());
-            buffer.clear();
-          }
-          inBracket = true;
-          prevBracket = c;
-        }
-      } else if (c == ']' || c == ')') {
-        if (prevBracket == '[' && c == ']' || prevBracket == '(' && c == ')') {
-          if (buffer.isNotEmpty) {
-            words.add(buffer.toString().trim());
-            buffer.clear();
-          }
-          inBracket = false;
-        } else {
-          buffer.write(c);
-        }
-      } else if (c == ',') {
-        if (inBracket) {
-          buffer.write(c);
-        } else {
-          words.add(buffer.toString().trim());
-          buffer.clear();
-        }
-      } else {
-        buffer.write(c);
-      }
-    }
-    if (buffer.isNotEmpty) {
-      words.add(buffer.toString().trim());
-    }
-    words.removeWhere((element) => element == "");
-    words = words.toSet().toList();
-    return words;
-  }
 
-  void block(BuildContext comicTileContext) {
-    if (!NavigationAdmission.allows(comicTileContext)) return;
-    final owner = comicTileContext.widget;
-    final route = ModalRoute.of(comicTileContext);
-    bool ownerCurrent() =>
-        comicTileContext.mounted &&
-        identical(comicTileContext.widget, owner) &&
-        (route == null || route.isActive) &&
-        NavigationAdmission.allows(comicTileContext);
-    final tags = List<String>.of(comic.tags ?? const []);
-    final words = [
-      ..._splitText(comic.title),
-      if (comic.subtitle != null && comic.subtitle != '') comic.subtitle!,
-      ...tags,
-    ];
-    final work = comicTileContext
-        .getInheritedWidgetOfExactType<SettingsSaveScope>()
-        ?.work;
-    showDialog<void>(
-      context: comicTileContext,
-      builder: (_) {
-        final dialog = _BlockComicDialog(
-          words: words,
-          tags: tags,
-          ownerCurrent: ownerCurrent,
-          onBlocked: onBlocked,
-        );
-        return work == null
-            ? dialog
-            : SettingsSaveScope(work: work, child: dialog);
-      },
-    );
-  }
 }
 
-class _BlockComicDialog extends StatefulWidget {
-  const _BlockComicDialog({
-    required this.words,
-    required this.tags,
-    required this.ownerCurrent,
-    this.onBlocked,
-  });
-  final List<String> words, tags;
-  final bool Function() ownerCurrent;
-  final VoidCallback? onBlocked;
-  @override
-  State<_BlockComicDialog> createState() => _BlockComicDialogState();
-}
-
-class _BlockComicDialogState extends SettingsSaveState<_BlockComicDialog> {
-  final _words = <String>[];
-  final _settings = KeywordSettingsStore(
-    readSettings: () => appdata.settings,
-    updateSettings: (change) => appdata.updateSettings(change),
-  );
-
-  void _block() {
-    if (!acceptsSettingsChanges ||
-        savingSettings ||
-        hasSettingsSaveError ||
-        !widget.ownerCurrent()) {
-      return;
-    }
-    final words = List<String>.unmodifiable(_words);
-    final callback = widget.onBlocked;
-    saveSetting(
-      BlockedKeywordList.comics,
-      () => _settings.blockAll(BlockedKeywordList.comics, words),
-      onSaved: () {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted ||
-              !acceptsSettingsChanges ||
-              !NavigationAdmission.allows(context) ||
-              ModalRoute.of(context)?.isCurrent != true) {
-            return;
-          }
-          if (widget.ownerCurrent()) {
-            context.showMessage(message: 'Blocked'.tl);
-            callback?.call();
-          }
-          if (mounted) leaveSettings();
-        });
-      },
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) => protectSettings(
-    ContentDialog(
-      title: 'Block'.tl,
-      content: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxHeight: math.max(0, math.min(400, context.height - 136)),
-        ),
-        child: SingleChildScrollView(
-          child: AbsorbPointer(
-            absorbing: savingSettings || hasSettingsSaveError,
-            child: ExcludeFocus(
-              excluding: savingSettings || hasSettingsSaveError,
-              child: Wrap(
-                runSpacing: 8,
-                spacing: 8,
-                children: [
-                  for (final word in widget.words)
-                    OptionChip(
-                      text: widget.tags.contains(word)
-                          ? word.translateTagIfNeed
-                          : word,
-                      isSelected: _words.contains(word),
-                      onTap: () {
-                        if (savingSettings || hasSettingsSaveError) return;
-                        setState(() {
-                          if (!_words.remove(word)) _words.add(word);
-                        });
-                      },
-                    ),
-                ],
-              ),
-            ),
-          ),
-        ).paddingHorizontal(16),
-      ),
-      actions: [
-        settingsSaveStatus,
-        FilledButton(
-          onPressed: savingSettings || hasSettingsSaveError ? null : _block,
-          child: Text('Block'.tl),
-        ),
-      ],
-    ),
-  );
-}
 
 class _ComicDescription extends StatelessWidget {
   const _ComicDescription({
@@ -947,110 +827,6 @@ class _ComicDescription extends StatelessWidget {
   }
 }
 
-class _ReadingHistoryPainter extends CustomPainter {
-  final int page;
-  final int? maxPage;
-
-  const _ReadingHistoryPainter(this.page, this.maxPage);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (maxPage == null) {
-      // 在中央绘制page
-      final textPainter = TextPainter(
-        text: TextSpan(
-          text: "$page",
-          style: TextStyle(fontSize: size.width * 0.8, color: Colors.white),
-        ),
-        textDirection: TextDirection.ltr,
-      );
-      textPainter.layout();
-      textPainter.paint(
-        canvas,
-        Offset(
-          (size.width - textPainter.width) / 2,
-          (size.height - textPainter.height) / 2,
-        ),
-      );
-    } else if (page == maxPage) {
-      // 在中央绘制勾
-      final paint = Paint()
-        ..color = Colors.white
-        ..strokeWidth = 2
-        ..style = PaintingStyle.stroke;
-      canvas.drawLine(
-        Offset(size.width * 0.2, size.height * 0.5),
-        Offset(size.width * 0.45, size.height * 0.75),
-        paint,
-      );
-      canvas.drawLine(
-        Offset(size.width * 0.45, size.height * 0.75),
-        Offset(size.width * 0.85, size.height * 0.3),
-        paint,
-      );
-    } else {
-      // 在左上角绘制page, 在右下角绘制maxPage
-      final textPainter = TextPainter(
-        text: TextSpan(
-          text: "$page",
-          style: TextStyle(fontSize: size.width * 0.8, color: Colors.white),
-        ),
-        textDirection: TextDirection.ltr,
-      );
-      textPainter.layout();
-      textPainter.paint(canvas, const Offset(0, 0));
-      final textPainter2 = TextPainter(
-        text: TextSpan(
-          text: "/$maxPage",
-          style: TextStyle(fontSize: size.width * 0.5, color: Colors.white),
-        ),
-        textDirection: TextDirection.ltr,
-      );
-      textPainter2.layout();
-      textPainter2.paint(
-        canvas,
-        Offset(
-          size.width - textPainter2.width,
-          size.height - textPainter2.height,
-        ),
-      );
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) {
-    return oldDelegate is! _ReadingHistoryPainter ||
-        oldDelegate.page != page ||
-        oldDelegate.maxPage != maxPage;
-  }
-}
-
-class _ReadingProgressBadge extends StatelessWidget {
-  const _ReadingProgressBadge(this.description);
-  final String description;
-
-  @override
-  Widget build(BuildContext context) => Tooltip(
-    message: description,
-    child: Semantics(
-      label: description,
-      excludeSemantics: true,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
-        color: context.colorScheme.primaryContainer,
-        child: Text(
-          description.replaceAll('\n', ' '),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            fontSize: 12,
-            color: context.colorScheme.onPrimaryContainer,
-          ),
-        ),
-      ),
-    ),
-  );
-}
 
 class SimpleComicTile extends StatelessWidget {
   const SimpleComicTile({
@@ -1098,36 +874,9 @@ class SimpleComicTile extends StatelessWidget {
       child: child,
     );
 
-    final state = _tileState(comic);
-    if (state.hasNewUpdate || state.historyDescription != null) {
-      child = Stack(
-        children: [
-          child,
-          if (state.hasNewUpdate)
-            Positioned(
-              left: 0,
-              top: 0,
-              child: Container(
-                decoration: const BoxDecoration(
-                  borderRadius: BorderRadius.only(
-                    bottomRight: Radius.circular(4),
-                  ),
-                ),
-                clipBehavior: Clip.antiAlias,
-                child: _buildUpdateBadge(context),
-              ),
-            ),
-          if (state.historyDescription case final description?)
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: _ReadingProgressBadge(description),
-            ),
-        ],
-      );
-    }
-
+    // The reading-progress strip used to be drawn over the cover here. It told
+    // the reader a page number they cannot act on from this screen, so the cover
+    // is left clean.
     if (heroID != null) {
       child = Hero(tag: "cover$heroID", child: child);
     }

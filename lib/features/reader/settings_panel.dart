@@ -14,14 +14,12 @@ class ReaderSettingsPanel extends StatelessWidget {
     required this.work,
     required this.brightnessPreview,
     required this.onChanged,
-    required this.isCurrent,
   });
 
   final ReaderSettingsRequest request;
   final ImageWork work;
   final ReaderBrightnessPreview brightnessPreview;
   final void Function(String) onChanged;
-  final bool Function() isCurrent;
 
   @override
   Widget build(BuildContext context) => SettingsSaveScope(
@@ -30,9 +28,6 @@ class ReaderSettingsPanel extends StatelessWidget {
       comicId: request.comicId,
       comicSource: request.sourceKey,
       currentReaderMode: () => request.currentMode,
-      isDetectingLayout: () => isCurrent() && request.isDetectingLayout,
-      onDetectLayout: () =>
-          isCurrent() ? request.detectLayout() : Future.value(),
       onChanged: onChanged,
       brightnessPreview: brightnessPreview,
     ),

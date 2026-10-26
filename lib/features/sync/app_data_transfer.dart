@@ -2,12 +2,8 @@ import 'app_data_import_journal.dart';
 import 'pica_import.dart';
 import 'app_data_archive.dart';
 import 'data_sync_commit.dart';
-import 'data_sync_content_journal.dart';
-import 'data_sync_content.dart';
-import 'data_sync_content_fingerprint.dart';
 import 'dart:async';
 import 'dart:convert';
-import 'dart:isolate';
 import 'package:uuid/uuid.dart';
 import 'package:venera_next/foundation/app_data_operations.dart';
 
@@ -22,30 +18,12 @@ import 'package:venera_next/features/history/history_manager.dart';
 import 'package:venera_next/network/cookie_jar.dart';
 import 'package:venera_next/foundation/file_system.dart';
 
-Future<File> exportAppData({bool sync = true, File? destination}) =>
-    AppDataOperations.instance.run(
-      () => _exportAppData(sync, destination: destination),
-    );
+/// Writes the application's own data to a `.venera` archive. Local only:
+/// no remote transport is involved.
+Future<File> exportAppData({File? destination}) =>
+    AppDataOperations.instance.run(() => _exportAppData(destination));
 
-/// The upload journal owns this destination and its staging directory before
-/// export starts, so interrupted work can be cleaned without scanning caches.
-Future<void> exportSyncAppData({
-  required bool excludeFields,
-  required File destination,
-  String? syncOperationId,
-}) => AppDataOperations.instance.run(() async {
-  await _exportAppData(
-    excludeFields,
-    destination: destination,
-    syncOperationId: syncOperationId,
-  );
-});
-
-Future<File> _exportAppData(
-  bool sync, {
-  File? destination,
-  String? syncOperationId,
-}) async {
+Future<File> _exportAppData(File? destination) async {
   final cacheFilePath =
       destination?.path ??
       FilePath.join(App.cachePath, '${const Uuid().v4()}.venera');
@@ -54,100 +32,28 @@ Future<File> _exportAppData(
       : FilePath.join(destination.parent.path, 'export-staging');
   final cacheFile = File(cacheFilePath);
   final dataPath = App.dataPath;
-  final content = _contentOperation(dataPath, syncOperationId);
   await SourceTransactionJournal.checkReadyForTransfer(dataPath);
   await HistoryManager.cache?.waitForAsyncWrites();
   await appdata.saveData(false);
   final archiveData =
       jsonDecode(jsonEncode(appdata.toJson())) as Map<String, dynamic>;
-  if (sync) {
-    final settings = archiveData['settings'] as Map<String, dynamic>;
-    for (final field in appdata.splitField(
-      content?.scope.excludedFields ??
-          SyncConfiguration.readExcludedFields(settings['disableSyncFields']),
-    )) {
-      settings.remove(field);
-    }
-  }
   final settingsJson = jsonEncode(archiveData);
   await AppDataArchive.create(
     dataPath: dataPath,
     cachePath: App.cachePath,
     destinationPath: cacheFilePath,
     settingsJson: settingsJson,
-    syncContentId: content?.id,
     stagingDirectoryPath: stagingDirectoryPath,
   );
   return cacheFile;
 }
 
-DataSyncContentRecord? _contentOperation(String path, String? id) {
-  if (id == null) return null;
-  final marker = appdata.implicitData['webdavSyncOperation'];
-  final required =
-      marker is Map && marker['id'] == id && marker['version'] == 4;
-  if (!required &&
-      !File(
-        FilePath.join(path, DataSyncContentJournal.fileName),
-      ).existsSync()) {
-    return null;
-  }
-  final journal = DataSyncContentJournal.open(path);
-  try {
-    final record = journal.lookup(id);
-    if (record == null && required) {
-      throw StateError('Missing sync content intent');
-    }
-    return record;
-  } finally {
-    journal.close();
-  }
-}
-
-Future<String> _captureSyncContent(
-  String path,
-  DataSyncContentScope scope, {
-  bool importGuard = false,
-}) {
-  final memory = jsonEncode(appdata.toJson());
-  return Isolate.run(
-    () => DataSyncContentFingerprint.capture(
-      path,
-      excludedFields: scope.excludedFields,
-      archiveSyncEnabled: scope.archiveSyncEnabled,
-      memorySettingsJson: memory,
-      importGuard: importGuard,
-    ),
-  );
-}
-
-/// An older archive is [DataSyncCommitState.notApplied]. Failures after the
-/// replacement boundary carry explicit commit or recovery evidence.
+/// An archive that predates version metadata still imports; a newer archive is
+/// [DataSyncCommitState.notApplied].
 Future<DataSyncCommitState> importAppData(
   File file, [
   bool checkVersion = false,
 ]) => AppDataOperations.instance.run(() => _importAppData(file, checkVersion));
-
-/// Sync cancellation is checked after queueing and immediately before replacement.
-/// Once replacement starts, the existing commit/rollback path must finish.
-/// [publishImported] wraps only notifications originating from the snapshot or
-/// its rollback, including a repository's deferred cache publication.
-Future<DataSyncCommitState> importSyncAppData(
-  File file, {
-  required void Function() checkActive,
-  bool force = false,
-  void Function(void Function())? publishImported,
-  String? syncOperationId,
-}) => AppDataOperations.instance.run(
-  () => _importAppData(
-    file,
-    true,
-    force: force,
-    checkActive: checkActive,
-    publishImported: publishImported,
-    syncOperationId: syncOperationId,
-  ),
-);
 
 Future<DataSyncCommitState> _importAppData(
   File file,
@@ -155,7 +61,6 @@ Future<DataSyncCommitState> _importAppData(
   bool force = false,
   void Function()? checkActive,
   void Function(void Function())? publishImported,
-  String? syncOperationId,
 }) async {
   checkActive?.call();
   final cacheDir = await Directory(
@@ -203,36 +108,6 @@ Future<DataSyncCommitState> _importAppData(
     journal.checkReadyForImport();
     await SourceTransactionJournal.checkReadyForTransfer(App.dataPath);
     await const SourceDataStorage().recover(App.dataPath);
-    final content = _contentOperation(App.dataPath, syncOperationId);
-    if (content != null) {
-      final currentPolicy = DataSyncContentScope(
-        endpoint: content.scope.endpoint,
-        excludedFields: SyncConfiguration.readExcludedFields(
-          appdata.settings['disableSyncFields'],
-        ),
-        archiveSyncEnabled: appdata.settings['backupWebdavSyncEnabled'] == true,
-      );
-      // Appdata imports apply the live policy. A policy changed during the
-      // network wait must not expand what the original guard may overwrite.
-      if (currentPolicy.id != content.scope.id) {
-        throw const DataSyncContentConflict();
-      }
-      final contents = DataSyncContentJournal.open(App.dataPath);
-      try {
-        if (!force) {
-          contents.verifyBeforeImport(
-            content.id,
-            await _captureSyncContent(
-              App.dataPath,
-              content.scope,
-              importGuard: true,
-            ),
-          );
-        }
-      } finally {
-        contents.close();
-      }
-    }
     // Close every participating database before creating immutable backups.
     // A failed close leaves its live file untouched and the other hosts reopen.
     await appdata.saveData(false);
@@ -260,7 +135,6 @@ Future<DataSyncCommitState> _importAppData(
         if (reloadCookies) 'cookie.db',
         if (hasComicSources) 'comic_source',
       },
-      syncOperationId: syncOperationId,
     );
     checkActive?.call();
     mutationStarted = true;
@@ -311,17 +185,6 @@ Future<DataSyncCommitState> _importAppData(
     } else {
       // Reopening a repository may have repaired metadata settings.
       await appdata.saveData(false);
-    }
-    if (content != null) {
-      final contents = DataSyncContentJournal.open(App.dataPath);
-      try {
-        contents.recordSnapshot(
-          content.id,
-          await _captureSyncContent(App.dataPath, content.scope),
-        );
-      } finally {
-        contents.close();
-      }
     }
     await transaction.markApplied(DateTime.now().millisecondsSinceEpoch);
     state = DataSyncCommitState.applied;

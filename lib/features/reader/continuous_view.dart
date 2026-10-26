@@ -12,7 +12,6 @@ import 'package:venera_next/features/reader/image_downloads.dart';
 import 'package:venera_next/foundation/image_work.dart';
 import 'package:venera_next/features/reader/image_position.dart';
 import 'package:venera_next/features/reader/comic_image.dart';
-import 'package:venera_next/features/reader/auto_reading.dart';
 import 'package:venera_next/features/reader/waterfall_flow.dart';
 import 'package:venera_next/foundation/context.dart';
 import 'package:venera_next/foundation/image_provider/reader_image.dart';
@@ -47,8 +46,6 @@ class ReaderContinuousView extends StatefulWidget {
     required this.onViewportChanged,
     required this.onUpdate,
     required this.onFloatingButton,
-    required this.onCollectImage,
-    required this.onActiveChapterChanged,
     required this.onContentLoading,
     required this.onPreviousError,
     required this.onNavigationError,
@@ -65,8 +62,6 @@ class ReaderContinuousView extends StatefulWidget {
   final void Function(ReaderImageViewController, bool) onViewportChanged;
   final VoidCallback onUpdate;
   final void Function(int) onFloatingButton;
-  final VoidCallback onCollectImage;
-  final VoidCallback onActiveChapterChanged;
   final void Function(bool) onContentLoading;
   final void Function(Object, StackTrace) onPreviousError;
   final void Function(int, Object, StackTrace) onNavigationError;
@@ -78,10 +73,7 @@ class ReaderContinuousView extends StatefulWidget {
 }
 
 class ContinuousModeState extends State<ReaderContinuousView>
-    implements
-        ReaderImageViewController,
-        AutoReadingViewport,
-        AutoReadingImageViewport {
+    implements ReaderImageViewController {
   late var _imageDownloads = ReaderImageDownloads(work: widget.imageWork);
 
   @override
@@ -101,6 +93,7 @@ class ContinuousModeState extends State<ReaderContinuousView>
   bool _disposed = false;
   Timer? _initialCacheTimer;
   Timer? _scrollActivityTimer;
+  Timer? _cacheTimer;
   ScrollPosition? _smoothPosition;
   int _smoothGeneration = 0;
 
@@ -178,10 +171,6 @@ class ContinuousModeState extends State<ReaderContinuousView>
 
   bool get crossChapter => data.crossChapter;
 
-  bool get _splitWideImages => data.vertical && data.splitWideImages;
-
-  bool get _splitWideImagesInvert => data.invertSplit;
-
   int get _flowImageCount => crossChapter ? _waterfallFlow.imageCount : maxPage;
 
   int get _flowItemCount => _flowImageCount + 2;
@@ -257,23 +246,21 @@ class ContinuousModeState extends State<ReaderContinuousView>
     });
   }
 
-  void _setReaderLocation(WaterfallImageRef imageRef) {
+  /// Reports the scrolled location and returns whether it actually changed.
+  /// A continuous view fires on every position update while the finger moves,
+  /// so callers must not rebuild the reader shell for an unchanged page.
+  bool _setReaderLocation(WaterfallImageRef imageRef) {
     var segment = _segmentOfChapter(imageRef.position.chapter);
     var chapterChanged = currentChapter != imageRef.position.chapter;
     if (segment != null && chapterChanged) {
       navigation.restoreChapter(imageRef.position.chapter);
       navigation.replaceChapterImages(segment.images);
-      // Wait until the scroll/layout callback has finished before updating UI.
-      final waterfall = _waterfall;
-      Future.microtask(() {
-        if (mounted && identical(_waterfall, waterfall)) {
-          widget.onActiveChapterChanged();
-        }
-      });
     }
     if (chapterChanged || currentPage != imageRef.position.imageNumber) {
       navigation.reportPage(imageRef.position.imageNumber);
+      return true;
     }
+    return false;
   }
 
   int? _waterfallIndexOfChapterPage(int chapter, int page) {
@@ -344,13 +331,47 @@ class ContinuousModeState extends State<ReaderContinuousView>
       itemScrollController.jumpTo(index: index);
       _futurePosition = null;
       cacheImages(index);
-      SchedulerBinding.instance.addPostFrameCallback((_) {
-        if (isCurrent()) {
-          _isNavigatingWaterfallLocation = false;
-        }
-      });
+      // Jumping once is not enough: the target page's image has not been laid
+      // out yet, so its real height differs from the placeholder the list used.
+      // As neighbours finish loading the list re-derives offsets by index and
+      // the view drifts back toward the chapter start. Re-asserting the index
+      // for a short window pins the reader where it was asked to go.
+      _settleAt(index, isCurrent: isCurrent);
     });
   }
+
+  /// Re-asserts [index] for a short window while images settle.
+  ///
+  /// Only corrects while the reported position is a *different* entry, so a
+  /// scroll the user starts during the window is not fought. Ends as soon as
+  /// two consecutive checks agree, and never runs longer than [maxChecks].
+  void _settleAt(int index, {required bool Function() isCurrent}) {
+    const maxChecks = 12;
+    var checks = 0;
+    var stable = 0;
+    _settleTimer?.cancel();
+    _settleTimer = Timer.periodic(const Duration(milliseconds: 40), (timer) {
+      if (!isCurrent() || _disposed) {
+        timer.cancel();
+        return;
+      }
+      final positions = itemPositionsListener.itemPositions.value;
+      final reported = positions.isEmpty ? null : positions.first.index;
+      if (reported == index) {
+        // Two agreeing checks mean the layout has stopped moving.
+        if (++stable >= 2) {
+          timer.cancel();
+          return;
+        }
+      } else if (reported != null) {
+        stable = 0;
+        itemScrollController.jumpTo(index: index);
+      }
+      if (++checks >= maxChecks) timer.cancel();
+    });
+  }
+
+  Timer? _settleTimer;
 
   @override
   void initState() {
@@ -396,6 +417,8 @@ class ContinuousModeState extends State<ReaderContinuousView>
     _smoothPosition = null;
     _initialCacheTimer?.cancel();
     _scrollActivityTimer?.cancel();
+    _cacheTimer?.cancel();
+    _settleTimer?.cancel();
     _scrollController?.removeListener(onScroll);
     _scrollController = null;
     widget.onViewportChanged(this, false);
@@ -428,13 +451,15 @@ class ContinuousModeState extends State<ReaderContinuousView>
           _isNavigatingWaterfallLocation) {
         return;
       }
-      _setReaderLocation(imageRef);
-      widget.onUpdate();
+      // The position listener fires continuously during a drag. Rebuilding the
+      // shell for a page that did not change makes scrolling stutter, so only
+      // publish the update when the reported location actually moved.
+      if (_setReaderLocation(imageRef)) widget.onUpdate();
     } else if (page != currentPage) {
       navigation.reportPage(page);
       widget.onUpdate();
     }
-    cacheImages(page);
+    _scheduleCacheImages(page);
     if (crossChapter) {
       _ensureWaterfallImagesBefore(page);
       _ensureWaterfallImagesAfter(page);
@@ -448,99 +473,6 @@ class ContinuousModeState extends State<ReaderContinuousView>
     }
     final position = controller.position;
     return position.pixels >= position.maxScrollExtent - 1;
-  }
-
-  @override
-  bool get autoReadingReady =>
-      autoReadingImages.state == AutoReadingImageState.ready;
-
-  @override
-  AutoReadingImageReadiness get autoReadingImages {
-    final controller = _scrollController;
-    if (_disposed ||
-        !mounted ||
-        controller == null ||
-        !controller.hasClients ||
-        isZoomedIn ||
-        isLongPressing ||
-        fingers > 0 ||
-        _isRestoringPrependedSegmentPosition ||
-        _isNavigatingWaterfallLocation ||
-        controller.position.isScrollingNotifier.value) {
-      return AutoReadingImageReadiness(
-        AutoReadingImageState.blocked,
-        navigation.content,
-      );
-    }
-    final visible = imageStates
-        .whereType<ComicImageState>()
-        .where((image) => image.visibleInReader)
-        .toList();
-    final state = combineAutoReadingImageStates(
-      visible.map((image) => image.autoReadingImageState),
-    );
-    return AutoReadingImageReadiness(state, <Object>{
-      for (final image in visible) image.widget.image,
-    });
-  }
-
-  @override
-  AutoReadingStep autoScroll(
-    double distance, {
-    required bool acrossChapters,
-    bool skipUnavailableImages = false,
-  }) {
-    final images = autoReadingImages;
-    if (images.state == AutoReadingImageState.blocked ||
-        (!skipUnavailableImages &&
-            images.state != AutoReadingImageState.ready)) {
-      return AutoReadingStep.waiting;
-    }
-    final position = scrollController.position;
-    final lastIndex = crossChapter && !acrossChapters
-        ? _waterfallIndexOfChapterPage(currentChapter, maxPage)!
-        : _flowImageCount;
-    final last = itemPositionsListener.itemPositions.value
-        .where((item) => item.index == lastIndex)
-        .firstOrNull;
-    var available = position.maxScrollExtent - position.pixels;
-    if (last != null) {
-      available = math.min(
-        available,
-        math.max(0.0, (last.itemTrailingEdge - 1) * position.viewportDimension),
-      );
-      if (last.itemTrailingEdge <= 1.001) {
-        if (crossChapter &&
-            acrossChapters &&
-            _waterfallFlow.lastChapter! < data.maxChapter) {
-          if (_waterfall.afterError != null) return AutoReadingStep.finished;
-          _ensureWaterfallImagesAfter(_flowImageCount);
-          return AutoReadingStep.waiting;
-        }
-        if (!crossChapter &&
-            acrossChapters &&
-            currentChapter < data.maxChapter) {
-          navigation.toChapter(currentChapter + 1);
-          return AutoReadingStep.waiting;
-        }
-        if (crossChapter && acrossChapters && skipUnavailableImages) {
-          final finalImage = _imageRefAt(lastIndex);
-          if (finalImage != null &&
-              finalImage.position.chapter != currentChapter) {
-            // Short error placeholders can expose the final chapter before
-            // scrolling moves the active location into that chapter.
-            itemScrollController.jumpTo(index: lastIndex);
-            _setReaderLocation(finalImage);
-            return AutoReadingStep.advanced;
-          }
-        }
-        return AutoReadingStep.finished;
-      }
-    }
-    if (available <= 0) return AutoReadingStep.waiting;
-    _futurePosition = null;
-    scrollController.jumpTo(position.pixels + math.min(distance, available));
-    return AutoReadingStep.advanced;
   }
 
   double? _futurePosition;
@@ -564,8 +496,6 @@ class ContinuousModeState extends State<ReaderContinuousView>
     var old = _futurePosition;
     _futurePosition ??= currentLocation;
     double k = (_futurePosition! - currentLocation).abs() / 1600 + 1;
-    final customSpeed = data.scrollSpeed;
-    k *= customSpeed;
     _futurePosition = _futurePosition! + offset * k;
     var beforeOffset = (_futurePosition! - currentLocation).abs();
     _futurePosition = _futurePosition!.clamp(
@@ -624,6 +554,23 @@ class ContinuousModeState extends State<ReaderContinuousView>
       data.comicId,
       image.position.chapterId,
     );
+  }
+
+  /// Defers neighbour prefetching until the scroll has settled.
+  ///
+  /// [cacheImages] used to run from the position listener, i.e. on every frame
+  /// of a drag. Starting downloads and full-resolution decodes while the
+  /// gesture is still moving competes with the frames being rendered and reads
+  /// as a stutter. The delay also coalesces a fast fling into one pass. It is
+  /// kept short because a slow source needs the prefetch to start as early as
+  /// possible: the buffer it builds is only as deep as the number of pages
+  /// configured.
+  void _scheduleCacheImages(int page) {
+    _cacheTimer?.cancel();
+    _cacheTimer = Timer(const Duration(milliseconds: 150), () {
+      if (_disposed || !mounted) return;
+      cacheImages(page);
+    });
   }
 
   void cacheImages(int current) {
@@ -830,9 +777,6 @@ class ContinuousModeState extends State<ReaderContinuousView>
           width: width,
           height: height,
           fit: BoxFit.contain,
-          splitWideImage: _splitWideImages,
-          splitWideImageInvert: _splitWideImagesInvert,
-          showImageDimensions: data.showImageDimensions,
           onInit: (state) => imageStates.add(state),
           onDispose: (state) => imageStates.remove(state),
         );
@@ -995,13 +939,6 @@ class ContinuousModeState extends State<ReaderContinuousView>
     if (data.limitImageWidth && width / height > 0.7 && data.vertical) {
       width = height * 0.7;
     }
-    if (data.vertical) {
-      final margin = data.sideMargin;
-      final percent = margin;
-      // Resize the flow itself so images retain their aspect ratio and scroll
-      // extents match the visible content, including waterfall and auto-reading.
-      width *= 1 - percent * 2 / 100;
-    }
 
     return PhotoView.customChild(
       backgroundDecoration: BoxDecoration(color: context.colorScheme.surface),
@@ -1043,10 +980,6 @@ class ContinuousModeState extends State<ReaderContinuousView>
   @override
   void handleDoubleTap(Offset location) {
     if (_disposed || !mounted) return;
-    if (data.doubleTapCollect) {
-      widget.onCollectImage();
-      return;
-    }
     final initial = photoViewController.getInitialScale?.call();
     if (initial == null) return;
     double target;
@@ -1072,16 +1005,13 @@ class ContinuousModeState extends State<ReaderContinuousView>
     final initial = photoViewController.getInitialScale?.call();
     if (initial == null) return;
     final target = initial * 1.75;
-    var size = widget.readerSize();
-    Offset zoomPosition;
-    if (!data.centerLongPressZoom) {
-      zoomPosition = Offset(
-        size.width / 2 - location.dx,
-        size.height / 2 - location.dy,
-      );
-    } else {
-      zoomPosition = Offset(0, 0);
-    }
+    // Long press always zooms at the press position; the removed
+    // `longPressZoomPosition` choice no longer applies.
+    final size = widget.readerSize();
+    final zoomPosition = Offset(
+      size.width / 2 - location.dx,
+      size.height / 2 - location.dy,
+    );
     photoViewController.animateScale?.call(target, zoomPosition);
     onScaleUpdate(target);
     isLongPressing = true;

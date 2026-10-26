@@ -213,11 +213,6 @@ class _HistoryPageState extends State<HistoryPage> {
 
     List<Widget> normalActions = [
       IconButton(
-        icon: const Icon(Icons.query_stats),
-        tooltip: 'Reading statistics'.tl,
-        onPressed: () => context.to(() => ReadingStatsPage(manager: _manager)),
-      ),
-      IconButton(
         icon: const Icon(Icons.refresh),
         tooltip: 'Refresh All Histories'.tl,
         onPressed: _refreshAllHistories,

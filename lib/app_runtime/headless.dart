@@ -1,23 +1,18 @@
-import 'package:venera_next/foundation/global_preference_store.dart';
-import 'package:venera_next/foundation/application_preferences.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/widgets.dart';
 import 'package:venera_next/features/comic_source/comic_source_api.dart';
 import 'package:venera_next/foundation/log.dart';
 import 'package:venera_next/features/follow_updates/follow_updates_manager.dart';
-import 'package:venera_next/foundation/appdata.dart';
 import 'package:venera_next/features/favorites/favorites_api.dart';
 import 'package:venera_next/features/favorites/favorites_manager.dart';
 
 import 'bootstrap_core.dart';
 import 'core_bootstrap.dart';
-import 'data_sync.dart';
 import 'headless_arguments.dart';
 import 'headless_bindings.dart';
 import 'headless_source_update_command.dart';
 import 'headless_source_updates.dart';
-import 'headless_sync_command.dart';
 import 'headless_subscription_command.dart';
 import 'headless_output.dart';
 import 'headless_shutdown.dart';
@@ -38,8 +33,7 @@ Future<void> runHeadlessMode(List<String> args) async {
   }
   // Need to initialize the app for some features to work
   configureHeadlessBindings();
-  final sync = createApplicationDataSync();
-  final core = createCoreBootstrap(onDataChanged: sync.onDataChanged);
+  final core = createCoreBootstrap();
   var initialized = false;
   var commandExitCode = 0;
   SourceUpdateService? sourceUpdates;
@@ -47,15 +41,6 @@ Future<void> runHeadlessMode(List<String> args) async {
     await core.start();
     initialized = true;
     switch (request.command) {
-      case HeadlessCommand.webdav:
-        commandExitCode = await runHeadlessSyncCommand(
-          request.subcommand,
-          isConfigured: sync.hasConfiguration,
-          upload: sync.uploadData,
-          download: sync.downloadData,
-          emit: cliPrint,
-        );
-        break;
       case HeadlessCommand.updateScript:
         final updates = sourceUpdates = SourceUpdateService(
           manager: ComicSourceManager.current,
@@ -67,9 +52,7 @@ Future<void> runHeadlessMode(List<String> args) async {
         break;
       case HeadlessCommand.updateSubscribe:
         commandExitCode = await runHeadlessSubscriptionCommand(
-          folder: GlobalPreferenceStore(
-            appdata.settings,
-          ).read(FavoritePreferences.followUpdatesFolder),
+          folder: null,
           selected: request.comic,
           updateSelected: _updateSelectedSubscription,
           updateAll: (folder) => updateFolder(folder, true).map(
@@ -123,12 +106,7 @@ Future<void> runHeadlessMode(List<String> args) async {
       },
       closeCore: core.close,
       disposeBindings: () {
-        sync.dispose();
         configureComicSourceDataSavedHandler(null);
-      },
-      flushPersistence: () async {
-        // Closing an unacquired service drains without persisting defaults.
-        await sync.closeAndWait();
       },
       emit: cliPrint,
       reportError: (error, stack) =>

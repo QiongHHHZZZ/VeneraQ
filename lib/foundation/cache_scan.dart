@@ -13,28 +13,26 @@ typedef CacheScanner =
 
 Future<CacheScanResult> scanCacheDirectory(String dbPath, String dir) async {
   return Isolate.run(() async {
-    int totalSize = 0;
-    List<String> unmanagedFiles = [];
-    var db = openSqliteDatabase(dbPath);
+    var totalSize = 0;
+    final unmanagedFiles = <String>[];
+    final db = openSqliteDatabase(dbPath);
     try {
-      await for (var file in Directory(dir).list(recursive: true)) {
-        if (file is File) {
-          var size = await file.length();
-          var segments = file.uri.pathSegments;
-          var name = segments.last;
-          var dir = segments.elementAtOrNull(segments.length - 2) ?? "*";
-          var res = db.select(
-            '''
-              SELECT * FROM cache
-              WHERE dir = ? AND name = ?
-            ''',
-            [dir, name],
-          );
-          if (res.isEmpty) {
-            unmanagedFiles.add(file.path);
-          } else {
-            totalSize += size;
-          }
+      // One query, not one per file. A large cache holds thousands of files and
+      // this scan sits in front of every cache lookup during startup, so the
+      // per-file SELECT was the dominant cost of opening the app.
+      final managed = <String>{
+        for (final row in db.select('SELECT dir, name FROM cache;'))
+          '${row['dir']}/${row['name']}',
+      };
+      await for (final file in Directory(dir).list(recursive: true)) {
+        if (file is! File) continue;
+        final segments = file.uri.pathSegments;
+        final name = segments.last;
+        final parent = segments.elementAtOrNull(segments.length - 2) ?? '*';
+        if (managed.contains('$parent/$name')) {
+          totalSize += await file.length();
+        } else {
+          unmanagedFiles.add(file.path);
         }
       }
     } finally {

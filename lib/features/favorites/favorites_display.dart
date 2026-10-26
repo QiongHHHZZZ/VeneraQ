@@ -24,11 +24,11 @@ class _FavoriteDisplayButtonState
         appdata.settings,
       ).read(FavoritePreferences.displayMode) ==
       'gallery';
-  int get _columns => GlobalPreferenceStore(
+  String get _tileSize => GlobalPreferenceStore(
     appdata.settings,
-  ).read(FavoritePreferences.galleryColumns);
+  ).read(FavoritePreferences.tileScale);
   @override
-  Object get contextMenuIdentity => (_gallery, _columns);
+  Object get contextMenuIdentity => (_gallery, _tileSize);
   int _menuGeneration = 0;
   @override
   void initState() {
@@ -104,7 +104,9 @@ class _FavoriteDisplayButtonState
     bool gallery,
     void Function<T>(Preference<T>, T) select,
   ) {
-    final columns = _columns;
+    final tileSize = GlobalPreferenceStore(
+      appdata.settings,
+    ).read(FavoritePreferences.tileScale);
     return [
       MenuEntry(
         icon: gallery ? Icons.view_list : Icons.check,
@@ -113,31 +115,23 @@ class _FavoriteDisplayButtonState
       ),
       MenuEntry(
         icon: gallery ? Icons.check : Icons.grid_view,
-        text: 'Gallery'.tl,
+        text: 'Grid'.tl,
         onClick: () => select(FavoritePreferences.displayMode, 'gallery'),
       ),
-      if (gallery) ...[
+      // The cover size replaces the old column count: the size is what decides
+      // how many covers fit now, so offering both would only let them disagree.
+      for (final (value, label) in const [
+        ('small', 'Small covers'),
+        ('medium', 'Medium covers'),
+        ('large', 'Large covers'),
+      ])
         MenuEntry(
-          icon: columns == FavoritePreferences.galleryColumns.defaultValue
+          icon: tileSize == value
               ? Icons.check
-              : Icons.auto_awesome_mosaic_outlined,
-          text: 'Auto'.tl,
-          onClick: () => select(
-            FavoritePreferences.galleryColumns,
-            FavoritePreferences.galleryColumns.defaultValue,
-          ),
+              : Icons.photo_size_select_large_outlined,
+          text: label.tl,
+          onClick: () => select(FavoritePreferences.tileScale, value),
         ),
-        for (
-          var count = FavoritePreferences.galleryColumns.min;
-          count <= FavoritePreferences.galleryColumns.max;
-          count++
-        )
-          MenuEntry(
-            icon: columns == count ? Icons.check : Icons.grid_view_outlined,
-            text: '@c columns'.tlParams({'c': count}),
-            onClick: () => select(FavoritePreferences.galleryColumns, count),
-          ),
-      ],
     ];
   }
 }

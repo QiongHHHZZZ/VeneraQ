@@ -13,6 +13,7 @@ import 'package:venera_next/features/history/history.dart';
 import 'package:venera_next/features/local_comics/local_comics.dart';
 import 'package:venera_next/foundation/image_provider/cached_image.dart';
 import 'package:venera_next/foundation/log.dart';
+import 'package:venera_next/foundation/read_progress.dart';
 import 'package:venera_next/foundation/appdata.dart';
 import 'package:venera_next/foundation/application_preferences.dart';
 import 'package:venera_next/foundation/global_preference_store.dart';
@@ -54,9 +55,6 @@ Future<void> init(CoreBootstrap core) async {
             appdata.settings,
           ).read(FavoritePreferences.displayMode) ==
           'gallery'),
-      galleryColumns: GlobalPreferenceStore(
-        appdata.settings,
-      ).read(FavoritePreferences.galleryColumns),
     ),
   );
   if (App.isAndroid) {
@@ -72,23 +70,31 @@ Future<void> init(CoreBootstrap core) async {
 }
 
 ComicTileState _resolveComicTileState(Comic comic) {
+  // The history list carries no tile state.
+  //
+  // A row there records a comic the reader has already opened, so "chapters
+  // left" is not an action this list offers, and the count only covered the
+  // artwork for a comic that is also a favorite. Returning before the favorite
+  // and read-mark lookups also keeps a long history list cheap to build.
+  if (comic is History) return const ComicTileState();
   final type = _comicTypeOf(comic);
-  final preferences = GlobalPreferenceStore(appdata.settings);
-  final history = preferences.read(DiscoveryPreferences.showHistoryStatusOnTile)
-      ? HistoryManager().find(comic.id, type)
+  final favorites = LocalFavoritesManager();
+  final isFavorite = favorites.isExist(comic.id, type);
+  final chapterCount = isFavorite
+      ? favorites.chapterCountOf(comic.id, type)
       : null;
-  return ComicTileState(
-    isFavorite:
-        preferences.read(DiscoveryPreferences.showFavoriteStatusOnTile) &&
-        LocalFavoritesManager().isExist(comic.id, type),
-    historyPage: history?.page,
-    historyMaxPage: history?.maxPage,
-    historyDescription: history?.description,
-    hasNewUpdate:
-        preferences.read(DiscoveryPreferences.showUpdateStatusOnTile) &&
-        type != ComicType.local &&
-        LocalFavoritesManager().hasNewUpdate(comic.id, type),
+  // Unread counts chapters without a durable read mark.
+  //
+  // This used to subtract the stored reading position (`ep`), which only moves
+  // when the reader opens a chapter; marking chapters read by hand updated the
+  // read set but left the position alone, so the badge never changed. The marks
+  // now outlive the history row, so clearing history no longer resets the badge
+  // to "everything unread".
+  final unread = unreadChapterCount(
+    HistoryManager().readChapters(comic.id, type),
+    chapterCount,
   );
+  return ComicTileState(chapterCount: chapterCount, unreadChapters: unread);
 }
 
 ComicType _comicTypeOf(Comic comic) {
@@ -99,9 +105,21 @@ ComicType _comicTypeOf(Comic comic) {
 }
 
 ImageProvider? _resolveComicTileImageProvider(Comic comic) {
+  if (comic is History) {
+    // A history row can outlive its metadata: clearing history then reading the
+    // comic again used to write the position back with an empty cover. Ask the
+    // source to repair it instead of silently painting an empty tile. With no
+    // installed source there is nothing to ask, so the tile stays blank rather
+    // than showing a load error on every uninstalled comic.
+    if (comic.cover.trim().isEmpty &&
+        comic.type.comicSource == null &&
+        LocalManager().find(comic.id, comic.type) == null) {
+      return null;
+    }
+    return HistoryImageProvider(comic);
+  }
   if (comic.cover.trim().isEmpty) return null;
   if (comic is LocalComic) return LocalComicImageProvider(comic);
-  if (comic is History) return HistoryImageProvider(comic);
   if (comic.sourceKey == 'local') {
     final localComic = LocalManager().find(comic.id, ComicType.local);
     return localComic == null ? null : FileImage(localComic.coverFile);

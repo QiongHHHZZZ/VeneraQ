@@ -150,47 +150,46 @@ class _BodyState extends State<_Body> with SingleTickerProviderStateMixin {
         : widget.manager.all();
     return Column(
       children: [
-        _sourceAppbar(context, 'Comic Source'.tl),
+        // Matches the settings entry that opens this page; "Comic Source"
+        // described the rows inside rather than the destination.
+        _sourceAppbar(context, 'Sources & Services'.tl),
         Expanded(
           child: NestedScrollView(
             headerSliverBuilder: (context, innerScrolled) => [
               SliverToBoxAdapter(
                 child: Column(
                   children: [
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 8,
-                      ),
-                      child: Align(
-                        alignment: AlignmentDirectional.centerStart,
-                        child: FilledButton.icon(
-                          onPressed: _addSource,
-                          icon: const Icon(Icons.add),
-                          label: Text('Add source'.tl),
-                        ),
-                      ),
-                    ),
-                    TabBar(
-                      controller: tabs,
-                      isScrollable: true,
-                      tabAlignment: TabAlignment.start,
-                      tabs: [
-                        for (final title in [
-                          'Installed'.tl,
-                          'Source repositories'.tl,
-                        ])
-                          Tab(
-                            height:
-                                (MediaQuery.textScalerOf(context).scale(14) *
-                                            1.5 +
-                                        24)
-                                    .clamp(48, double.infinity),
-                            text: title,
+                    // The add action sits beside the tabs instead of taking a
+                    // full row of its own above them.
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TabBar(
+                            controller: tabs,
+                            isScrollable: true,
+                            tabAlignment: TabAlignment.start,
+                            tabs: [
+                              for (final title in [
+                                'Installed'.tl,
+                                'Source repositories'.tl,
+                              ])
+                                Tab(
+                                  height:
+                                      (MediaQuery.textScalerOf(
+                                                    context,
+                                                  ).scale(14) *
+                                                  1.5 +
+                                              24)
+                                          .clamp(48, double.infinity),
+                                  text: title,
+                                ),
+                            ],
                           ),
+                        ),
+                        const SourceInstallationSummary(compact: true),
+                        const SizedBox(width: 4),
                       ],
                     ),
-                    const SourceInstallationSummary(),
                   ],
                 ),
               ),
@@ -421,27 +420,31 @@ class _BodyState extends State<_Body> with SingleTickerProviderStateMixin {
 
   Widget buildCard(BuildContext context) => SliverToBoxAdapter(
     child: Padding(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Wrap(
             spacing: 8,
             runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
+              // Same weight and shape as the update check beside it, because
+              // both act on the installed list. An icon-only "+" read as a
+              // toolbar ornament rather than the entry point for adding a source.
+              FilledButton.tonalIcon(
+                onPressed: _addSource,
+                icon: const Icon(Icons.add),
+                label: Text('Add source'.tl),
+              ),
               SourceUpdateCheckButton(
                 manager: widget.manager,
                 service: widget.updates,
                 refresh: widget.refresh,
               ),
-              IconButton(
-                onPressed: help,
-                tooltip: 'Help'.tl,
-                icon: const Icon(Icons.help_outline),
-              ),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 6),
           Text(
             'Update checks use each source’s linked repository. Link older or manually imported sources to include them.'
                 .tl,
@@ -457,12 +460,6 @@ class _BodyState extends State<_Body> with SingleTickerProviderStateMixin {
     barrierDismissible: false,
     builder: (_) => const SourceImportDialog(),
   );
-
-  void help() {
-    launchUrlString(
-      "https://github.com/VeneraQ/VeneraQ/blob/main/doc/development/source_debugging.zh.md",
-    );
-  }
 }
 
 class _CallbackSetting extends StatefulWidget {
@@ -654,6 +651,42 @@ class _SliverComicSourceState extends SettingsSaveState<_SliverComicSource> {
     );
   }
 
+  /// Whether expanding this card could show anything.
+  ///
+  /// A card with no account and no settings has nothing under its header, so it
+  /// must not offer to open. Settings a script only exposes at runtime are not
+  /// consulted here: doing so would register JS callbacks merely to draw a
+  /// collapsed row, so those cards stay openable until expanded.
+  bool get _hasExpandableContent {
+    if (source.account != null) return true;
+    final declared = source.settings;
+    if (declared == null) return true;
+    return declared.isNotEmpty;
+  }
+
+  /// The collapsed header's hint that something is hidden underneath.
+  ///
+  /// This is what replaced the trailing expand chevron. A chevron had to own the
+  /// row's right edge, which is the same edge the three action icons want, so
+  /// one of the two lost ~18px. A count says more than an arrow did and belongs
+  /// on the facts line, where there is room for it.
+  ///
+  /// A script that only exposes settings at runtime yields no count here (see
+  /// [_hasExpandableContent]), and its card shows the bare label instead.
+  String? get _expandHint {
+    final declared = source.settings;
+    if (declared == null) return 'Settings'.tl;
+    var count = declared.length;
+    final account = source.account;
+    if (account != null) {
+      // One "Log in" row when logged out; otherwise the info rows the account
+      // config declares plus the re-login row. `infoItems` is parsed config, not
+      // a JS getter, so counting it is free.
+      count += source.isLogged ? account.infoItems.length + 1 : 1;
+    }
+    return '@count settings'.tlParams({'count': count});
+  }
+
   @override
   Widget build(BuildContext context) {
     if (!expanded) {
@@ -666,109 +699,297 @@ class _SliverComicSourceState extends SettingsSaveState<_SliverComicSource> {
     final hasUpdate =
         newVersion != null && compareSemVer(newVersion, source.version);
     final canManageScript = source.filePath.isNotEmpty;
+    final canExpand = _hasExpandableContent;
+    final expandHint = canExpand ? _expandHint : null;
+    final colors = Theme.of(context).colorScheme;
+    // One card per source: the name and its facts stay on two short lines and
+    // the actions sit as a row of icons, so a long list reads as a list rather
+    // than a stack of multi-line blocks.
     return SliverMainAxisGroup(
       slivers: [
         SliverToBoxAdapter(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Wrap(
-                        spacing: 8,
-                        runSpacing: 4,
-                        crossAxisAlignment: WrapCrossAlignment.center,
+          child: Container(
+            margin: const EdgeInsets.fromLTRB(12, 3, 12, 3),
+            decoration: BoxDecoration(
+              color: colors.surfaceContainerLow,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: colors.outlineVariant.toOpacity(0.5),
+                width: 0.6,
+              ),
+            ),
+            clipBehavior: Clip.antiAlias,
+            // Ink is painted by the *nearest ancestor* Material, and here that
+            // is the Scaffold's — which sits above this Container's rounded
+            // clip. A tap on the card therefore painted a square highlight
+            // whose four corners poked out past the card's radius for as long
+            // as the highlight lasted. A transparent Material carrying the same
+            // radius puts an ink host *inside* the clip, so every ripple the
+            // card raises is rounded with the card.
+            child: Material(
+              type: MaterialType.transparency,
+              borderRadius: BorderRadius.circular(12),
+              clipBehavior: Clip.antiAlias,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  InkWell(
+                    onTap: canExpand
+                        ? () => setState(() => expanded = !expanded)
+                        : null,
+                    child: Padding(
+                      // The action icons own the row's right edge now, so the
+                      // trailing inset is only what keeps their tap ripple off
+                      // the card border.
+                      padding: const EdgeInsets.fromLTRB(12, 4, 4, 4),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(source.name, style: ts.s18),
-                          Text(
-                            source.version,
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
-                          if (hasUpdate)
-                            Text(
-                              'New Version'.tl,
-                              style: TextStyle(
-                                color: context.colorScheme.primary,
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  source.name,
+                                  style: ts.s16,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
                               ),
+                              // The actions are now the row's last children, so
+                              // nothing sits to their right and they hug the card
+                              // edge on every card. What used to sit here was a
+                              // fixed 18px expand-chevron rail, which held all
+                              // three icons exactly that far off the edge; the
+                              // "N settings" chip on the facts line below is what
+                              // tells the user the card opens.
+                              if (canManageScript)
+                                // Deliberately *not* wrapped in a Flexible: a
+                                // Flexible defaults to `flex: 1`, so it claimed
+                                // half the free width and left whatever it did not
+                                // use as dead space on the right. The icons then
+                                // floated inward by an amount that changed with
+                                // the length of the name — short names drifted
+                                // furthest from the edge, which is what read as
+                                // "the buttons are not right aligned".
+                                FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  alignment: AlignmentDirectional.centerEnd,
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      _sourceAction(
+                                        icon: Icons.update,
+                                        tooltip: 'Update'.tl,
+                                        onPressed: () => widget.update(source),
+                                        highlight: hasUpdate,
+                                      ),
+                                      _sourceAction(
+                                        icon: Icons.edit_note,
+                                        tooltip: 'Edit script'.tl,
+                                        onPressed: () => widget.edit(source),
+                                      ),
+                                      _sourceAction(
+                                        icon: Icons.delete_outline,
+                                        tooltip: 'Uninstall source'.tl,
+                                        onPressed: () => widget.delete(source),
+                                        color: colors.error,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                            ],
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2, right: 4),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Wrap(
+                                    spacing: 6,
+                                    runSpacing: 4,
+                                    crossAxisAlignment:
+                                        WrapCrossAlignment.center,
+                                    children: [
+                                      _sourceChip(
+                                        text: source.version,
+                                        background:
+                                            colors.surfaceContainerHighest,
+                                        foreground: colors.onSurface,
+                                      ),
+                                      if (hasUpdate)
+                                        _sourceChip(
+                                          text: 'New Version'.tl,
+                                          background: colors.primaryContainer,
+                                          foreground: colors.onPrimaryContainer,
+                                          icon: Icons.arrow_upward,
+                                        ),
+                                      if (canManageScript)
+                                        _sourceChip(
+                                          text: SourceRepositories.instance
+                                              .originLabel(source.key),
+                                          background: Colors.transparent,
+                                          foreground: colors.outline,
+                                          icon: Icons.inventory_2_outlined,
+                                          onTap: () => showSourceOriginPicker(
+                                            context,
+                                            source,
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                                // What replaced the expand chevron. It reports how
+                                // much is hidden underneath instead of merely
+                                // implying that something is, and it lives on the
+                                // facts line, whose right edge the actions above
+                                // no longer share, so it costs them nothing.
+                                if (expandHint != null) ...[
+                                  const SizedBox(width: 6),
+                                  _sourceChip(
+                                    text: expandHint,
+                                    background: Colors.transparent,
+                                    foreground: colors.outline,
+                                    icon: Icons.tune,
+                                    onTap: () =>
+                                        setState(() => expanded = !expanded),
+                                  ),
+                                ],
+                              ],
                             ),
-                        ],
-                      ),
-                    ),
-                    IconButton(
-                      onPressed: () => setState(() => expanded = !expanded),
-                      tooltip:
-                          (expanded
-                                  ? 'Hide source settings'
-                                  : 'Show source settings')
-                              .tl,
-                      icon: Icon(
-                        expanded ? Icons.expand_less : Icons.expand_more,
-                      ),
-                    ),
-                    if (canManageScript)
-                      PopupMenuButton<String>(
-                        tooltip: 'Source actions'.tl,
-                        onSelected: (action) {
-                          switch (action) {
-                            case 'origin':
-                              showSourceOriginPicker(context, source);
-                            case 'edit':
-                              widget.edit(source);
-                            case 'update':
-                              widget.update(source);
-                            case 'delete':
-                              widget.delete(source);
-                          }
-                        },
-                        itemBuilder: (_) => [
-                          PopupMenuItem(
-                            value: 'origin',
-                            child: Text('Manage source origin'.tl),
-                          ),
-                          PopupMenuItem(
-                            value: 'update',
-                            child: Text('Update'.tl),
-                          ),
-                          PopupMenuItem(
-                            value: 'edit',
-                            child: Text('Edit script'.tl),
-                          ),
-                          PopupMenuItem(
-                            value: 'delete',
-                            child: Text('Uninstall source'.tl),
                           ),
                         ],
                       ),
-                  ],
-                ),
-                if (canManageScript)
-                  TextButton.icon(
-                    onPressed: () => showSourceOriginPicker(context, source),
-                    icon: const Icon(Icons.link, size: 16),
-                    label: Text(
-                      SourceRepositories.instance.originLabel(source.key),
-                      textAlign: TextAlign.start,
                     ),
                   ),
-              ],
+                  if (expanded && canExpand) ...[
+                    Container(
+                      height: 0.6,
+                      color: colors.outlineVariant.toOpacity(0.5),
+                    ),
+                    settingsSaveStatus,
+                    protectSettings(
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          ...buildSourceSettings(),
+                          ..._buildAccount(),
+                        ],
+                      ),
+                    ),
+                  ],
+                ],
+              ),
             ),
           ),
         ),
-        if (expanded) ...[
-          SliverToBoxAdapter(child: settingsSaveStatus),
-          SliverToBoxAdapter(
-            child: protectSettings(
-              Column(children: buildSourceSettings().toList()),
+      ],
+    );
+  }
+
+  /// A compact icon action; its tooltip is the only label it needs.
+  ///
+  /// An `InkWell` in a 32px box rather than an `IconButton`: IconButton refuses
+  /// to shrink below its ~40px material tap target (its `constraints`,
+  /// `minimumSize` and `tapTargetSize` are all overridden by the M3 defaults
+  /// here), which centred a 20px glyph and left ~13px of empty box on its right.
+  /// That dead box is exactly what kept the last icon short of the card edge.
+  Widget _sourceAction({
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback onPressed,
+    Color? color,
+    bool highlight = false,
+  }) {
+    final colors = Theme.of(context).colorScheme;
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: onPressed,
+        customBorder: const CircleBorder(),
+        child: SizedBox(
+          width: 32,
+          height: 32,
+          child: Icon(
+            icon,
+            size: 20,
+            color: highlight
+                ? colors.primary
+                : color ?? colors.onSurfaceVariant,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// A small rounded label for one fact about the source.
+  Widget _sourceChip({
+    required String text,
+    required Color background,
+    required Color foreground,
+    IconData? icon,
+    VoidCallback? onTap,
+  }) {
+    final scaler = MediaQuery.textScalerOf(context);
+    final content = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: 12, color: foreground),
+            const SizedBox(width: 3),
+          ],
+          // Cap the label so a long repository name cannot push the chip past
+          // the card. A fixed cap would still overflow at a large text scale,
+          // so the row is also allowed to shrink.
+          Flexible(
+            child: Text(
+              text,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: scaler.scale(10), color: foreground),
             ),
           ),
-          SliverToBoxAdapter(
-            child: protectSettings(Column(children: _buildAccount().toList())),
-          ),
         ],
-        const SliverToBoxAdapter(child: Divider(indent: 16, endIndent: 16)),
+      ),
+    );
+    if (onTap == null) return content;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: content,
+    );
+  }
+
+  /// Asks for one of [values] and returns its index.
+  ///
+  /// A menu rather than a dropdown: entries render at full width, so a long
+  /// option label is readable instead of being clipped inside a fixed field.
+  ///
+  /// [anchor] is the tapped row's own context. This state builds slivers, so
+  /// its own `findRenderObject()` is a sliver and cannot be positioned like a
+  /// box — taking the anchor from the caller avoids that mismatch entirely.
+  Future<int?> _pickSourceOption({
+    required BuildContext anchor,
+    required List<String> values,
+  }) async {
+    final box = anchor.findRenderObject() as RenderBox?;
+    final overlay = Overlay.maybeOf(anchor)?.context.findRenderObject();
+    if (box == null || overlay is! RenderBox) return null;
+    final origin = box.localToGlobal(Offset.zero, ancestor: overlay);
+    return showMenu<int>(
+      context: anchor,
+      position: RelativeRect.fromRect(
+        Rect.fromLTWH(origin.dx, origin.dy, box.size.width, box.size.height),
+        Offset.zero & overlay.size,
+      ),
+      items: [
+        for (var index = 0; index < values.length; index++)
+          PopupMenuItem<int>(value: index, child: Text(values[index])),
       ],
     );
   }
@@ -792,46 +1013,45 @@ class _SliverComicSourceState extends SettingsSaveState<_SliverComicSource> {
           final options = (item.value['options'] as List);
           final current =
               source.data['settings']?[key] ?? item.value['default'];
-          yield Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text((item.value['title'] as String).ts(target.key)),
-                const SizedBox(height: 8),
-                Semantics(
-                  label: (item.value['title'] as String).ts(target.key),
-                  child: DropdownButtonFormField<dynamic>(
-                    key: ValueKey((key, current)),
-                    initialValue:
-                        options.any((option) => option['value'] == current)
-                        ? current
-                        : null,
-                    isExpanded: true,
-                    itemHeight: null,
-                    decoration: InputDecoration(
-                      border: const OutlineInputBorder(),
-                    ),
-                    items: [
-                      for (final option in options)
-                        DropdownMenuItem<dynamic>(
-                          value: option['value'],
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 8),
-                            child: Text(
-                              (option['text'] ?? option['value']).toString().ts(
-                                target.key,
-                              ),
-                            ),
-                          ),
-                        ),
-                    ],
-                    onChanged: acceptsSettingsChanges
-                        ? (value) => unawaited(_saveValue(target, key, value))
-                        : null,
-                  ),
-                ),
-              ],
+          String labelOf(Object? value) {
+            for (final option in options) {
+              if (option['value'] == value) {
+                return (option['text'] ?? option['value']).toString().ts(
+                  target.key,
+                );
+              }
+            }
+            return value?.toString() ?? '';
+          }
+
+          yield Builder(
+            builder: (rowContext) => ListTile(
+              title: Text((item.value['title'] as String).ts(target.key)),
+              subtitle: Text(
+                labelOf(current),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+              trailing: Icon(
+                Icons.arrow_drop_down,
+                color: acceptsSettingsChanges
+                    ? null
+                    : Theme.of(context).disabledColor,
+              ),
+              enabled: acceptsSettingsChanges,
+              onTap: acceptsSettingsChanges
+                  ? () async {
+                      final picked = await _pickSourceOption(
+                        anchor: rowContext,
+                        values: [
+                          for (final option in options)
+                            labelOf(option['value']),
+                        ],
+                      );
+                      if (picked == null || !_current(target)) return;
+                      await _saveValue(target, key, options[picked]['value']);
+                    }
+                  : null,
             ),
           );
         } else if (type == "switch") {

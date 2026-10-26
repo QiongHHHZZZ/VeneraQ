@@ -1,7 +1,6 @@
 import 'package:flutter/widgets.dart';
 import 'package:venera_next/components/file_save_task.dart';
 import 'package:venera_next/foundation/context.dart';
-import 'package:venera_next/foundation/file_interaction.dart';
 import 'package:venera_next/foundation/image_work.dart';
 import 'package:venera_next/foundation/log.dart';
 
@@ -40,13 +39,6 @@ class ReaderImageExportBinding {
              checkStop: image.checkStop,
            );
          },
-         share: (image) => Share.shareFile(
-           data: image.bytes,
-           filename: image.filename,
-           mime: image.type.mime,
-           resolveOrigin: () => context.sharePositionOrigin,
-           checkStop: image.checkStop,
-         ),
          onError: (error, stack) {
            Log.error('Reader', 'Failed to export image: $error', stack);
            if (context.mounted) context.showMessage(message: error.toString());
@@ -55,8 +47,7 @@ class ReaderImageExportBinding {
 
   final ReaderImageExporter _exporter;
 
-  Future<void> export({required bool sharing}) =>
-      _exporter.export(sharing: sharing);
+  Future<void> export() => _exporter.export();
 
   Future<void> dispose() => _exporter.dispose();
 }

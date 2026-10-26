@@ -477,6 +477,7 @@ class ContentDialog extends StatelessWidget {
     this.title, // 如果不传 title 将不会展示
     required this.content,
     this.dismissible = true,
+    this.showClose = true,
     this.actions = const [],
   });
 
@@ -488,6 +489,11 @@ class ContentDialog extends StatelessWidget {
 
   final bool dismissible;
 
+  /// Whether the title bar renders its close icon. Dialogs that save on pick
+  /// and are dismissed by tapping outside can drop the icon while keeping the
+  /// title. Defaults to true so every existing dialog is unchanged.
+  final bool showClose;
+
   @override
   Widget build(BuildContext context) {
     var content = SingleChildScrollView(
@@ -497,17 +503,22 @@ class ContentDialog extends StatelessWidget {
         children: [
           title != null
               ? Appbar(
-                  leading: IconButton(
-                    icon: const Icon(Icons.close),
-                    onPressed: dismissible
-                        ? () {
-                            if (NavigationAdmission.allows(context) &&
-                                ModalRoute.of(context)?.isCurrent != false) {
-                              Navigator.of(context).maybePop();
-                            }
-                          }
-                        : null,
-                  ),
+                  // An empty leading suppresses Appbar's own back button while
+                  // keeping the title bar.
+                  leading: showClose
+                      ? IconButton(
+                          icon: const Icon(Icons.close),
+                          onPressed: dismissible
+                              ? () {
+                                  if (NavigationAdmission.allows(context) &&
+                                      ModalRoute.of(context)?.isCurrent !=
+                                          false) {
+                                    Navigator.of(context).maybePop();
+                                  }
+                                }
+                              : null,
+                        )
+                      : const SizedBox.shrink(),
                   title: Text(title!),
                   backgroundColor: Colors.transparent,
                 )

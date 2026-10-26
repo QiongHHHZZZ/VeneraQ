@@ -5,7 +5,7 @@ import 'dart:async';
 import 'package:path/path.dart' as p;
 
 import 'package:flutter/foundation.dart' show visibleForTesting;
-import 'package:venera_next/features/comic_storage/comic_storage.dart';
+import 'package:venera_next/foundation/comic_storage.dart';
 import 'package:venera_next/foundation/appdata.dart';
 import 'package:venera_next/features/comic_source/comic_source_api.dart';
 import 'package:venera_next/foundation/comic_type.dart';
@@ -182,6 +182,49 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
 
   @override
   double get progress => _totalCount == 0 ? 0 : _downloadedCount / _totalCount;
+
+  @override
+  String get progressLabel => "$_downloadedCount/$_totalCount";
+
+  @override
+  List<DownloadChapterProgress> get chapterProgress {
+    final images = _images;
+    if (images == null) return const [];
+    final entries = images.entries.toList();
+    final chapters = comic?.chapters?.allChapters;
+    return [
+      for (var i = 0; i < entries.length; i++)
+        () {
+          final total = entries[i].value.length;
+          // Chapters before the cursor are finished, the cursor chapter is
+          // partly done, and later ones have not started.
+          final downloaded = i < _chapter
+              ? total
+              : i == _chapter
+              ? _index
+              : 0;
+          return DownloadChapterProgress(
+            // The map is keyed by chapter id, which is what the source needs to
+            // fetch pages; the reader has to see the chapter's name. The empty
+            // key marks a comic with no chapters at all, which is titled by the
+            // comic itself.
+            title: _chapterTitle(entries[i].key, chapters),
+            downloaded: downloaded.clamp(0, total),
+            total: total,
+            active: i == _chapter && _isRunning,
+          );
+        }(),
+    ];
+  }
+
+  /// Display name for one entry of [_images].
+  ///
+  /// Falls back to the raw key when the comic does not carry it: a stale or
+  /// renamed id is still better to show than an empty row.
+  String _chapterTitle(String key, Map<String, String>? chapters) {
+    if (key.isEmpty) return comic?.title ?? title;
+    return chapters?[key] ?? key;
+  }
 
   bool _isRunning = false;
 

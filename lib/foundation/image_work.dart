@@ -1,5 +1,18 @@
 import 'dart:async';
 
+import 'package:dio/dio.dart' show CancelToken, DioException;
+import 'package:venera_next/network/request_scope.dart' show RequestCancelled;
+
+/// Whether [error] only reports that accepted work was stopped on purpose.
+///
+/// Cancelling is how a reader exits: the transport then reports the same stop
+/// back as a request error. That is a normal outcome, not a failed operation,
+/// so it must not be retained as a failure that blocks the next exit.
+bool isImageCancellation(Object error) =>
+    error is ImageWorkTaskCancelled ||
+    error is RequestCancelled ||
+    (error is DioException && CancelToken.isCancel(error));
+
 /// Owns image reads and platform deliveries, including work whose
 /// originating widget has gone away. A cancellation stops the next stage;
 /// completion is acknowledged only after the current stage actually returns.
@@ -224,8 +237,14 @@ class ImageWorkTask {
   /// The returned acknowledgement removes this failure only if a drain has
   /// not already consumed it. An owner may use it after repairing the same
   /// idempotent assignment; existing observers still retain their own result.
+  ///
+  /// A cancellation is not a failure. Exiting the reader cancels in-flight
+  /// image work, and the transport then reports that same stop as a request
+  /// error. Retaining it would leave the session permanently failing its exit
+  /// preparation, so leaving the reader would be blocked on every attempt.
   void Function() recordFailure(Object error, StackTrace stack) {
     if (error is ImageWorkTaskCancelled) return () {};
+    if (isImageCancellation(error)) return () {};
     final failure = _ReportedWorkFailure(error, stack);
     _owner._failures.add(failure);
     _failures.add(failure);

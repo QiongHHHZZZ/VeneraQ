@@ -23,7 +23,7 @@ void openLocalComic(LocalComic comic) {
       initialChapter: start.chapter,
       initialPage: start.page,
       initialChapterGroup: start.group,
-      history: history ?? History.fromModel(model: comic, ep: 0, page: 0),
+      history: History.resume(history, comic),
       author: comic.subtitle,
       tags: comic.tags,
     ),

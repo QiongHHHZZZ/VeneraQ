@@ -466,6 +466,16 @@ class ComicChapters {
     throw RangeError('Chapter index out of range: $index');
   }
 
+  /// Whether the chapter at [index] is stored on the device.
+  ///
+  /// [downloaded] holds chapter ids, matching how downloads are recorded. The
+  /// id is resolved through the same flattened position the reader uses, so a
+  /// grouped list and a plain list agree on which row a record belongs to.
+  bool isChapterDownloaded(int index, Set<String>? downloaded) {
+    if (downloaded == null || index < 1 || index > length) return false;
+    return downloaded.contains(positionAt(index).id);
+  }
+
   /// Convert persisted group-relative coordinates to the reader's chapter.
   /// A missing group already denotes a flattened chapter number.
   int chapterIndex(int chapter, {int? group}) {
@@ -485,6 +495,33 @@ class ComicChapters {
             (total, group) => total + group.length,
           )
         : _chapters!.length;
+  }
+
+  /// Whether the chapter at [index] has been read.
+  ///
+  /// [index] is one-based across all groups. Grouped chapters are recorded as
+  /// "group-chapter"; a plain index is also accepted so a list that became
+  /// grouped after it was read keeps its marks.
+  bool isChapterRead(int index, ReadState history) {
+    if (index < 1 || index > length) return false;
+    if (!isGrouped) return history.readEpisode.contains('$index');
+    final position = positionAt(index);
+    return history.readEpisode.contains(
+          '${position.group}-${position.chapter}',
+        ) ||
+        history.readEpisode.contains('$index');
+  }
+
+  /// The earliest unread chapter, or null when everything has been read.
+  ///
+  /// This is the reader's "continue" target: like a library, continuing goes to
+  /// the first chapter still outstanding rather than to the last position, so
+  /// skipping ahead does not make the earlier unread chapters unreachable.
+  int? nextUnreadChapter(ReadState history) {
+    for (var index = 1; index <= length; index++) {
+      if (!isChapterRead(index, history)) return index;
+    }
+    return null;
   }
 
   /// Get the number of groups

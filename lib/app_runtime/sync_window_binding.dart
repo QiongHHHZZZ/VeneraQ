@@ -1,6 +1,5 @@
 import 'package:flutter/widgets.dart';
 import 'package:venera_next/components/window_frame.dart';
-import 'package:venera_next/features/sync/data_sync_controller.dart';
 import 'package:venera_next/features/follow_updates/follow_updates_manager.dart';
 import 'package:venera_next/features/local_comics/local.dart';
 import 'package:venera_next/features/local_comics/local_import_lifecycle.dart';
@@ -9,12 +8,9 @@ import 'package:venera_next/features/local_comics/local_import_lifecycle.dart';
 class SyncWindowBinding extends StatefulWidget {
   const SyncWindowBinding({
     required this.child,
-    required this.controller,
     required this.waitForHistoryWrites,
     this.isFinalizing,
     this.prepareInteractive,
-    this.prepareFollowUpdates,
-    this.prepareWebDavLibrary,
     this.prepareDownloads,
     this.prepareImages,
     this.prepareImports,
@@ -23,15 +19,12 @@ class SyncWindowBinding extends StatefulWidget {
     super.key,
   });
   final Future<VoidCallback> Function()? prepareInteractive;
-  final Future<VoidCallback> Function()? prepareFollowUpdates;
-  final Future<VoidCallback> Function()? prepareWebDavLibrary;
   final Future<VoidCallback> Function()? prepareDownloads;
   final Future<VoidCallback> Function()? prepareImages;
   final Future<VoidCallback> Function()? prepareImports;
   final VoidCallback? cancelStartupUpdates;
   final Future<void> Function()? closeStartupUpdates;
   final Widget child;
-  final DataSyncController controller;
   final Future<void> Function() waitForHistoryWrites;
   final bool Function()? isFinalizing;
 
@@ -41,10 +34,8 @@ class SyncWindowBinding extends StatefulWidget {
 
 class _SyncWindowBindingState extends State<SyncWindowBinding> {
   WindowFrameController? _window;
-  VoidCallback? _releaseSync;
   VoidCallback? _releaseInteractive;
   VoidCallback? _releaseFollowUpdates;
-  VoidCallback? _releaseWebDavLibrary;
   VoidCallback? _releaseDownloads;
   VoidCallback? _releaseImages;
   VoidCallback? _releaseImports;
@@ -68,7 +59,6 @@ class _SyncWindowBindingState extends State<SyncWindowBinding> {
   void _cancelStartupUpdates() => widget.cancelStartupUpdates?.call();
 
   Future<void> _waitThenClose() async {
-    final controller = widget.controller;
     final waitForHistoryWrites = widget.waitForHistoryWrites;
     _preparing = true;
     try {
@@ -79,15 +69,8 @@ class _SyncWindowBindingState extends State<SyncWindowBinding> {
         _releaseInteractive = await prepareInteractive();
         if (!mounted) return;
       }
-      _releaseFollowUpdates =
-          await (widget.prepareFollowUpdates ??
-              FollowUpdateJob.prepareForExit)();
+      _releaseFollowUpdates = await FollowUpdateJob.prepareForExit();
       if (!mounted) return;
-      final prepareWebDavLibrary = widget.prepareWebDavLibrary;
-      if (prepareWebDavLibrary != null) {
-        _releaseWebDavLibrary = await prepareWebDavLibrary();
-        if (!mounted) return;
-      }
       _releaseImports =
           await (widget.prepareImports ?? prepareLocalImportsForExit)();
       if (!mounted) return;
@@ -101,8 +84,6 @@ class _SyncWindowBindingState extends State<SyncWindowBinding> {
         if (!mounted) return;
       }
       await waitForHistoryWrites();
-      if (!mounted) return;
-      _releaseSync = await controller.prepareForExit();
     } catch (_) {
       _releasePreparedWork();
       rethrow;
@@ -114,41 +95,29 @@ class _SyncWindowBindingState extends State<SyncWindowBinding> {
 
   void _releasePreparedWork() {
     if (widget.isFinalizing?.call() == true) return;
-    final sync = _releaseSync;
-    _releaseSync = null;
     final images = _releaseImages;
     _releaseImages = null;
     final downloads = _releaseDownloads;
     final imports = _releaseImports;
-    final webDavLibrary = _releaseWebDavLibrary;
     final followUpdates = _releaseFollowUpdates;
     final interactive = _releaseInteractive;
     _releaseDownloads = null;
     _releaseImports = null;
-    _releaseWebDavLibrary = null;
     _releaseFollowUpdates = null;
     _releaseInteractive = null;
     try {
-      sync?.call();
+      images?.call();
     } finally {
       try {
-        images?.call();
+        downloads?.call();
       } finally {
         try {
-          downloads?.call();
+          imports?.call();
         } finally {
           try {
-            imports?.call();
+            followUpdates?.call();
           } finally {
-            try {
-              webDavLibrary?.call();
-            } finally {
-              try {
-                followUpdates?.call();
-              } finally {
-                interactive?.call();
-              }
-            }
+            interactive?.call();
           }
         }
       }

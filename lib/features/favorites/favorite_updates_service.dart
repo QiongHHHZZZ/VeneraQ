@@ -1,56 +1,50 @@
 import 'favorites_repository.dart';
 
-/// Tracking-folder state follows current configuration and committed storage.
+/// Chapter totals across every favorite folder.
+///
+/// This used to track which comics had a new chapter. That flag is gone, so the
+/// service now only carries the totals, which the unread badge is derived from.
 class FavoriteUpdatesService {
-  FavoriteUpdatesService({required this.repository, required this.folder});
+  FavoriteUpdatesService({required this.repository, required this.folders});
 
   final FavoritesRepository Function() repository;
-  final Object? Function() folder;
-  Set<(String, int)> _identities = {};
-  String? _loadedFolder;
+  final List<String> Function() folders;
+  Map<(String, int), int> _chapterCounts = {};
+  List<String> _loadedFolders = const [];
 
   void clear() {
-    _identities.clear();
-    _loadedFolder = null;
+    _chapterCounts = {};
+    _loadedFolders = const [];
   }
 
   void refresh() {
-    final selected = folder();
-    if (selected is! String || !repository().folderNames().contains(selected)) {
+    final selected = folders();
+    if (selected.isEmpty) {
       clear();
       return;
     }
-    final identities = repository()
-        .identities(selected, updatedOnly: true)
-        .toSet();
-    _identities = identities;
-    _loadedFolder = selected;
+    _chapterCounts = repository().chapterCounts(selected);
+    _loadedFolders = List<String>.of(selected);
   }
 
-  bool contains(String id, int type) =>
-      folder() == _loadedFolder && _identities.contains((id, type));
+  /// Chapter total from the last check, or null when never checked.
+  int? chapterCountFor(String id, int type) =>
+      _loadedFolders.isEmpty ? null : _chapterCounts[(id, type)];
 
+  /// Records the total reported by one committed check.
   void recordCommittedUpdate(
     String targetFolder,
     String id,
-    int type,
-    bool updated,
-  ) {
-    if (folder() != targetFolder) return;
-    if (_loadedFolder != targetFolder) {
-      // A configuration switch must not relabel identities from the old folder.
+    int type, {
+    int? chapterCount,
+  }) {
+    if (!_loadedFolders.contains(targetFolder)) {
+      // A folder created after the last refresh must not lose its totals.
       refresh();
       return;
     }
-    if (updated) {
-      _identities.add((id, type));
-    } else {
-      _identities.remove((id, type));
-    }
-  }
-
-  void recordCommittedRead(String id, int type) {
-    if (folder() != _loadedFolder) refresh();
-    _identities.remove((id, type));
+    // The check already knows the total; publishing it here keeps the badge in
+    // step without waiting for another database read.
+    if (chapterCount != null) _chapterCounts[(id, type)] = chapterCount;
   }
 }

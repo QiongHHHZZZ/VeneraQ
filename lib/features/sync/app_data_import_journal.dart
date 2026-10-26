@@ -884,7 +884,16 @@ void _checkTree(String path) {
   final resolved = type == FileSystemEntityType.directory
       ? Directory(absolute).resolveSymbolicLinksSync()
       : File(absolute).resolveSymbolicLinksSync();
-  if (!_samePath(absolute, resolved)) {
+  // Compare filesystem identity, not spelling. A platform may expose one
+  // directory under several names (Android spells the sandbox as both
+  // /data/data and /data/user/0), so an ancestor's resolved form proves nothing
+  // about this entry. The entry is an alias only when it resolves somewhere
+  // other than its own canonical parent joined with its own name.
+  final canonical = p.join(
+    Directory(p.dirname(absolute)).resolveSymbolicLinksSync(),
+    p.basename(absolute),
+  );
+  if (!_samePath(canonical, resolved)) {
     throw FileSystemException('Import filesystem entry is an alias', path);
   }
   if (type == FileSystemEntityType.directory) {

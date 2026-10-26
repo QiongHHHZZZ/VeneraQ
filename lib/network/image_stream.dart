@@ -32,12 +32,19 @@ Future<Uint8List?> readImageStream(
   Uint8List? bytes;
   var finished = false;
   var cleanupFailed = false;
+  var cancelRequested = false;
   void stop() {
     if (!settled.isCompleted) settled.complete();
   }
 
   void record(Object error, StackTrace stack) {
     if (finished) return;
+    // Once the caller has asked to stop, the transport reports its own
+    // cancellation back through the subscription. Those errors are the
+    // consequence of this stop, not evidence of a failed cleanup: retaining
+    // them would pair with the cancellation below and turn a normal exit into
+    // an ImageStreamCleanupFailure that blocks the reader from closing.
+    if (cancelRequested) return;
     failures.add((stage: 'read', error: error, stack: stack));
     stop();
   }
@@ -45,6 +52,7 @@ Future<Uint8List?> readImageStream(
   unawaited(
     cancelSignal.then((_) {
       if (finished || settled.isCompleted) return;
+      cancelRequested = true;
       try {
         checkStop();
       } catch (error, stack) {

@@ -1,17 +1,13 @@
-import 'package:venera_next/foundation/application_preferences.dart';
-import 'package:venera_next/foundation/global_preference_store.dart';
 import 'package:flutter/material.dart';
 import 'package:venera_next/components/appbar.dart';
 import 'package:venera_next/components/gesture.dart';
 import 'package:venera_next/components/loading.dart';
-import 'package:venera_next/components/pop_up_widget.dart';
 import 'package:venera_next/routing/app_navigation.dart';
 import 'package:venera_next/foundation/app_locale.dart';
 import 'package:venera_next/foundation/appdata.dart';
 import 'package:venera_next/foundation/context.dart';
 import 'package:venera_next/features/comic_source/comic_source.dart';
 import 'package:venera_next/routing/page_jump_target.dart';
-import 'package:venera_next/routing/settings.dart';
 import 'package:venera_next/foundation/extensions.dart';
 import 'package:venera_next/foundation/translations.dart';
 import 'package:venera_next/foundation/widget_utils.dart';
@@ -19,7 +15,10 @@ import 'package:venera_next/foundation/widget_utils.dart';
 import 'ranking_page.dart';
 
 class CategoriesPage extends StatefulWidget {
-  const CategoriesPage({super.key});
+  const CategoriesPage({super.key, this.sourceKey});
+
+  /// When set, only this source's categories are offered as tabs.
+  final String? sourceKey;
 
   @override
   State<CategoriesPage> createState() => _CategoriesPageState();
@@ -33,22 +32,21 @@ class _CategoriesPageState extends State<CategoriesPage>
 
   late TabController controller;
 
+  /// Category keys this instance may show, restricted to [widget.sourceKey].
+  List<String> get _availableCategories => [
+    for (final e in ComicSource.all())
+      if (widget.sourceKey == null || e.key == widget.sourceKey)
+        if (e.categoryData != null) e.categoryData!.key,
+  ];
+
   void onSettingsChanged() {
-    var categories = GlobalPreferenceStore(
-      appdata.settings,
-    ).read(DiscoveryPreferences.categoryPages);
-    var allCategories = ComicSource.all()
-        .map((e) => e.categoryData?.key)
-        .where((element) => element != null)
-        .map((e) => e!)
-        .toList();
-    categories = categories
-        .where((element) => allCategories.contains(element))
-        .toList();
-    if (!categories.isEqualTo(this.categories)) {
+    final next = _availableCategories;
+    if (!next.isEqualTo(categories)) {
       setState(() {
-        this.categories = categories;
+        categories = next;
       });
+      // Dispose before replacing, or each source switch leaks a ticker.
+      controller.dispose();
       controller = TabController(length: categories.length, vsync: this);
     }
   }
@@ -56,23 +54,17 @@ class _CategoriesPageState extends State<CategoriesPage>
   @override
   void initState() {
     super.initState();
-    var categories = GlobalPreferenceStore(
-      appdata.settings,
-    ).read(DiscoveryPreferences.categoryPages);
-    var allCategories = ComicSource.all()
-        .map((e) => e.categoryData?.key)
-        .where((element) => element != null)
-        .map((e) => e!)
-        .toList();
-    this.categories = categories
-        .where((element) => allCategories.contains(element))
-        .toList();
+    categories = _availableCategories;
     appdata.settings.addListener(onSettingsChanged);
     controller = TabController(length: categories.length, vsync: this);
   }
 
-  void addPage() {
-    showPopUpWidget(appNavigation.rootContext, setCategoryPagesWidget());
+  @override
+  void didUpdateWidget(CategoriesPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.sourceKey != widget.sourceKey) {
+      onSettingsChanged();
+    }
   }
 
   @override
@@ -83,21 +75,11 @@ class _CategoriesPageState extends State<CategoriesPage>
   }
 
   Widget buildEmpty() {
-    var msg = "No Category Pages".tl;
-    msg += '\n';
-    VoidCallback onTap;
-    if (ComicSource.isEmpty) {
-      msg += "Please add some sources".tl;
-      onTap = () {
-        context.to(() => ComicSourcePage());
-      };
-    } else {
-      msg += "Please check your settings".tl;
-      onTap = addPage;
-    }
+    // The sources are listed by the discovery source selector, so an empty
+    // state here means there are no sources installed.
     return NetworkError(
-      message: msg,
-      retry: onTap,
+      message: "${"No Category Pages".tl}\n${"Please add some sources".tl}",
+      retry: () => context.to(() => ComicSourcePage()),
       withAppbar: false,
       buttonText: "Manage".tl,
     );
@@ -110,27 +92,27 @@ class _CategoriesPageState extends State<CategoriesPage>
       return buildEmpty();
     }
 
+    // A single category needs no tab strip; the source selector above already
+    // identifies it.
+    final showTabs = categories.length > 1;
+
     return Material(
       child: Column(
         children: [
-          AppTabBar(
-            controller: controller,
-            key: PageStorageKey(categories.toString()),
-            tabs: categories.map((e) {
-              String title = e;
-              try {
-                title = getCategoryDataWithKey(e).title;
-              } catch (e) {
-                //
-              }
-              return Tab(text: title, key: Key(e));
-            }).toList(),
-            actionButton: TabActionButton(
-              icon: const Icon(Icons.add),
-              text: "Add".tl,
-              onPressed: addPage,
-            ),
-          ).paddingTop(context.padding.top),
+          if (showTabs)
+            AppTabBar(
+              controller: controller,
+              key: PageStorageKey(categories.toString()),
+              tabs: categories.map((e) {
+                String title = e;
+                try {
+                  title = getCategoryDataWithKey(e).title;
+                } catch (e) {
+                  //
+                }
+                return Tab(text: title, key: Key(e));
+              }).toList(),
+            ).paddingTop(context.padding.top),
           Expanded(
             child: TabBarView(
               controller: controller,

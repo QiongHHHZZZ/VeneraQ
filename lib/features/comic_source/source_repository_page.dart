@@ -1,20 +1,20 @@
-import 'package:venera_next/foundation/operation_failure.dart';
 import 'dart:async';
-import 'source_failure.dart';
-import 'package:venera_next/components/settings_save_state.dart';
-import 'source_failure_presentation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:dio/dio.dart' show Dio;
 import 'package:venera_next/components/pop_up_widget.dart';
+import 'package:venera_next/components/settings_save_state.dart';
+import 'package:venera_next/foundation/context.dart';
 import 'package:venera_next/foundation/translations.dart';
 
 import 'comic_source_manager.dart';
+import 'github_source_search_page.dart';
 import 'source.dart';
-import 'source_repositories.dart';
+import 'source_failure.dart';
+import 'source_failure_presentation.dart';
 import 'source_installations_scope.dart';
-import 'source_inspection_task.dart';
-import 'package:venera_next/foundation/log.dart';
-import 'source_installation_widgets.dart';
+import 'source_repositories.dart';
+import 'source_repository_sources_page.dart';
 
 class SourceRepositoriesPanel extends StatelessWidget {
   const SourceRepositoriesPanel({super.key, this.createClient});
@@ -27,19 +27,46 @@ class SourceRepositoriesPanel extends StatelessWidget {
     return ListenableBuilder(
       listenable: Listenable.merge([store, ComicSourceManager()]),
       builder: (context, _) => ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
         children: [
-          Text('Save repositories to browse and install comic sources.'.tl),
-          const SizedBox(height: 12),
+          Text(
+            'Save repositories to browse and install comic sources.'.tl,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 8),
           Align(
             alignment: Alignment.centerLeft,
-            child: FilledButton.icon(
-              onPressed: () => _editRepository(context),
-              icon: const Icon(Icons.add),
-              label: Text('Add repository'.tl),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                FilledButton.tonalIcon(
+                  onPressed: () => _editRepository(context),
+                  icon: const Icon(Icons.add, size: 18),
+                  label: Text('Add repository'.tl),
+                  style: FilledButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ),
+                // Discovery is a separate door: it searches GitHub instead of
+                // asking for a URL the user would have to find elsewhere.
+                FilledButton.tonalIcon(
+                  onPressed: () async {
+                    await showPopUpWidget(
+                      context,
+                      const GitHubSourceSearchPage(),
+                    );
+                  },
+                  icon: const Icon(Icons.travel_explore, size: 18),
+                  label: Text('Find on GitHub'.tl),
+                  style: FilledButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ),
+              ],
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 10),
           if (store.all.isEmpty)
             SourceManagementEmptyState(
               icon: Icons.inventory_2_outlined,
@@ -49,78 +76,15 @@ class SourceRepositoriesPanel extends StatelessWidget {
                       .tl,
             ),
           for (final repository in store.all)
-            Card.outlined(
-              margin: const EdgeInsets.only(bottom: 12),
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Icon(Icons.inventory_2_outlined),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(
-                            repository.name,
-                            style: Theme.of(context).textTheme.titleMedium,
-                          ),
-                        ),
-                        PopupMenuButton<String>(
-                          tooltip: 'Repository actions'.tl,
-                          onSelected: (action) {
-                            if (action == 'edit') {
-                              _editRepository(context, repository);
-                            }
-                            if (action == 'remove') {
-                              _removeRepository(context, repository);
-                            }
-                          },
-                          itemBuilder: (_) => [
-                            PopupMenuItem(
-                              value: 'edit',
-                              child: Text('Edit repository'.tl),
-                            ),
-                            PopupMenuItem(
-                              value: 'remove',
-                              child: Text('Remove repository'.tl),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    SelectableText(
-                      repository.url,
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                    const SizedBox(height: 12),
-                    Wrap(
-                      spacing: 16,
-                      runSpacing: 8,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [
-                        Text(
-                          '@count linked sources'.tlParams({
-                            'count': _linkedCount(repository).toString(),
-                          }),
-                        ),
-                        FilledButton.tonalIcon(
-                          onPressed: () => showPopUpWidget(
-                            context,
-                            SourceRepositoryCatalogPage(
-                              repository: repository,
-                              createClient: createClient,
-                            ),
-                          ),
-                          icon: const Icon(Icons.library_add_outlined),
-                          label: Text('Browse sources'.tl),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
+            _RepositoryCard(
+              repository: repository,
+              sourceCount: _linkedCount(repository),
+              onOpen: () => _openRepository(context, repository),
+              onEdit: () => _editRepository(context, repository),
+              onRemove: () => _removeRepository(context, repository),
+              onCopy: () => _copyRepository(context, repository),
+              onToggle: (value) =>
+                  SourceRepositories.instance.setEnabled(repository.id, value),
             ),
         ],
       ),
@@ -134,6 +98,22 @@ class SourceRepositoriesPanel extends StatelessWidget {
             repository.id,
       )
       .length;
+
+  /// Opens one repository's own source list.
+  ///
+  /// The store is looked up again because the card may have been built before
+  /// an edit replaced the repository object.
+  Future<void> _openRepository(
+    BuildContext context,
+    SourceRepository repository,
+  ) async {
+    final current = SourceRepositories.instance.find(repository.id);
+    if (current == null) return;
+    await showPopUpWidget(
+      context,
+      SourceRepositorySourcesPage.saved(current, createClient: createClient),
+    );
+  }
 
   Future<void> _editRepository(
     BuildContext context, [
@@ -163,6 +143,22 @@ class SourceRepositoriesPanel extends StatelessWidget {
         perform: () => SourceRepositories.instance.remove(repository),
       ),
     );
+  }
+
+  /// Puts the repository's source-list address on the clipboard.
+  ///
+  /// The address is not drawn anywhere in source management any more, so this
+  /// is the only way to get hold of it — for sharing, or for adding the same
+  /// list on another device. Duplicating the repository itself is not an
+  /// option: the store refuses two entries with the same address.
+  Future<void> _copyRepository(
+    BuildContext context,
+    SourceRepository repository,
+  ) async {
+    await Clipboard.setData(ClipboardData(text: repository.url));
+    if (context.mounted) {
+      context.showMessage(message: 'Repository address copied'.tl);
+    }
   }
 }
 
@@ -395,344 +391,15 @@ class _RepositoryActionDialogState
   );
 }
 
-class SourceRepositoryCatalogPage extends StatefulWidget {
-  const SourceRepositoryCatalogPage({
-    super.key,
-    required this.repository,
-    this.sourceToLink,
-    this.createClient,
-  });
-  final SourceRepository repository;
-  final ComicSource? sourceToLink;
-  final Dio Function()? createClient;
-  @override
-  State<SourceRepositoryCatalogPage> createState() =>
-      _SourceRepositoryCatalogPageState();
-}
-
-class _SourceRepositoryCatalogPageState
-    extends State<SourceRepositoryCatalogPage> {
-  List<SourceCatalogEntry>? entries;
-  List<String> skipped = const [];
-  String? error;
-  String query = '';
-  bool loading = false;
-  SourceInspectionTask<SourceCatalog>? _inspection;
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    if (_inspection == null || !_inspection!.sameWindow) load();
-  }
-
-  @override
-  void didUpdateWidget(covariant SourceRepositoryCatalogPage oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.repository != widget.repository ||
-        oldWidget.createClient != widget.createClient) {
-      load();
-    }
-  }
-
-  @override
-  void dispose() {
-    _inspection?.cancel();
-    super.dispose();
-  }
-
-  Future<void> load() async {
-    _inspection?.cancel();
-    final task = SourceInspectionTask<SourceCatalog>(context);
-    _inspection = task;
-    final repository = widget.repository;
-    final createClient = widget.createClient;
-    bool isCurrent() => mounted && identical(_inspection, task) && task.active;
-    setState(() {
-      loading = true;
-      error = null;
-      entries = null;
-      skipped = const [];
-    });
-    try {
-      final result = await task.run(
-        (scope) => SourceRepositories.instance.load(
-          repository,
-          createClient: createClient,
-          cancelToken: scope.cancelToken,
-        ),
-      );
-      if (isCurrent()) {
-        setState(() {
-          entries = result.entries;
-          skipped = result.skipped;
-        });
-      }
-    } catch (e, stack) {
-      if (!isCurrent()) Log.info('Retired source catalog', '$e\n$stack');
-      if (isCurrent()) {
-        setState(() => error = sourceFailureMessage(e));
-      }
-    } finally {
-      if (mounted && identical(_inspection, task)) {
-        setState(() => loading = false);
-      }
-    }
-  }
-
-  Future<void> act(SourceCatalogEntry entry) async {
-    final source = SourceInstallationsScope.of(context).manager.find(entry.key);
-    if (source != null) {
-      final repository = widget.repository;
-      await showDialog<void>(
-        context: context,
-        barrierDismissible: false,
-        builder: (_) => _RepositoryActionDialog(
-          title: 'Link repository'.tl,
-          content:
-              'Use "@repository" for future updates of "@source"? The installed script and its settings will be kept until you update it.'
-                  .tlParams({
-                    'repository': repository.name,
-                    'source': source.name,
-                  }),
-          perform: () =>
-              SourceRepositories.instance.link(source.key, repository, entry),
-        ),
-      );
-      return;
-    }
-    setState(() {
-      error = null;
-    });
-    try {
-      if (SourceRepositories.instance.find(widget.repository.id)?.url !=
-          widget.repository.url) {
-        throw OperationFailure.message(
-          'Repository changed. Refresh the list and try again.'.tl,
-        );
-      }
-      SourceInstallationsScope.of(
-        context,
-      ).enqueueRepository(widget.repository, entry);
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          error = sourceFailureMessage(e);
-        });
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final visible = (entries ?? <SourceCatalogEntry>[])
-        .where(
-          (entry) =>
-              (widget.sourceToLink == null ||
-                  entry.key == widget.sourceToLink!.key) &&
-              '${entry.name} ${entry.description}'.toLowerCase().contains(
-                query.toLowerCase(),
-              ),
-        )
-        .toList();
-    return PopUpWidgetScaffold(
-      title: 'Browse sources'.tl,
-      tailing: const [SourceInstallationSummary(compact: true)],
-      body: ListenableBuilder(
-        listenable: Listenable.merge([
-          SourceRepositories.instance,
-          SourceInstallationsScope.of(context).manager,
-          SourceInstallationsScope.of(context),
-        ]),
-        builder: (context, _) => Column(
-          children: [
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.all(16),
-                children: [
-                  Text(
-                    widget.repository.name,
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                  const SizedBox(height: 8),
-                  SelectableText(
-                    widget.repository.url,
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                  const SizedBox(height: 12),
-                  if (widget.sourceToLink != null)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: Text(
-                        'Choose the variant to use for "@name".'.tlParams({
-                          'name': widget.sourceToLink!.name,
-                        }),
-                      ),
-                    ),
-                  TextField(
-                    onChanged: (text) => setState(() => query = text),
-                    decoration: InputDecoration(
-                      labelText: 'Search sources'.tl,
-                      prefixIcon: const Icon(Icons.search),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: TextButton.icon(
-                      onPressed: loading ? null : load,
-                      icon: const Icon(Icons.refresh),
-                      label: Text('Refresh list'.tl),
-                    ),
-                  ),
-                  if (loading) const LinearProgressIndicator(),
-                  if (error != null)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      child: Text(
-                        error!,
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.error,
-                        ),
-                      ),
-                    ),
-                  if (skipped.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      child: Text(
-                        'Skipped @count invalid source entries: @names'
-                            .tlParams({
-                              'count': skipped.length.toString(),
-                              'names': skipped.join(', '),
-                            }),
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.error,
-                        ),
-                      ),
-                    ),
-                  if (!loading && error == null && visible.isEmpty)
-                    SourceManagementEmptyState(
-                      icon: Icons.search_off,
-                      title:
-                          (widget.sourceToLink != null
-                                  ? 'This source is not listed in this repository.'
-                                  : 'No sources found')
-                              .tl,
-                      description: 'Try another search or refresh the list.'.tl,
-                    ),
-                  for (final entry in visible) _entry(context, entry),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _entry(BuildContext context, SourceCatalogEntry entry) {
-    final installed =
-        SourceInstallationsScope.of(context).manager.find(entry.key) != null;
-    final matchingTask = SourceInstallationsScope.of(
-      context,
-    ).taskFor(sourceKey: entry.key, url: entry.url);
-    // Share active work across repositories. A past failure belongs only to
-    // its original entry, so another repository can start a fresh attempt.
-    final task =
-        matchingTask != null &&
-            (matchingTask.active ||
-                (matchingTask.repository?.id == widget.repository.id &&
-                    matchingTask.repository?.url == widget.repository.url &&
-                    matchingTask.url == entry.url))
-        ? matchingTask
-        : null;
-    final origin = SourceRepositories.instance.originFor(entry.key);
-    final linked =
-        installed &&
-        origin?.repositoryId == widget.repository.id &&
-        origin?.url == entry.url;
-    return Padding(
-      key: ObjectKey(entry),
-      padding: const EdgeInsets.symmetric(vertical: 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(entry.name, style: Theme.of(context).textTheme.titleMedium),
-          Text(entry.version, style: Theme.of(context).textTheme.bodySmall),
-          if (entry.description.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Text(entry.description),
-            ),
-          const SizedBox(height: 8),
-          if (task != null && (task.active || (!installed && task.canRetry)))
-            SourceInstallationStatus(
-              task: task,
-              originLabel: task.repository?.id != widget.repository.id
-                  ? 'Installation task from @origin'.tlParams({
-                      'origin': task.originLabel,
-                    })
-                  : null,
-            )
-          else
-            SourceInstallationRow(
-              text: installed
-                  ? 'Installed · @origin'.tlParams({
-                      'origin': SourceRepositories.instance.originLabel(
-                        entry.key,
-                      ),
-                    })
-                  : '',
-              action: linked
-                  ? Tooltip(
-                      message: 'Linked to this repository'.tl,
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.check,
-                              size: 18,
-                              color: Theme.of(context).colorScheme.primary,
-                            ),
-                            const SizedBox(width: 6),
-                            Flexible(
-                              child: Text(
-                                'Installed'.tl,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: Theme.of(context).colorScheme.primary,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    )
-                  : Tooltip(
-                      message:
-                          (installed ? 'Use this repository' : 'Install source')
-                              .tl,
-                      child: FilledButton.tonal(
-                        onPressed: loading ? null : () => act(entry),
-                        child: Text(
-                          (installed ? 'Use this repository' : 'Install source')
-                              .tl,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ),
-            ),
-          const SizedBox(height: 8),
-          const Divider(),
-        ],
-      ),
-    );
-  }
-}
-
+/// Switches an installed source to the copy another repository publishes.
+///
+/// Picking a repository used to only relink the source for update checks: the
+/// script, the version and the code all stayed the old repository's, so a
+/// source installed from one repository could never be moved to a newer or
+/// older copy elsewhere — the page said "updates now follow X" while running
+/// the old script. Replacement is what the reader asked for by choosing a
+/// different repository, so it is what happens here; when the two copies are
+/// the same address there is nothing to replace and only the link is written.
 Future<void> showSourceOriginPicker(
   BuildContext context,
   ComicSource source,
@@ -742,10 +409,108 @@ Future<void> showSourceOriginPicker(
     builder: (_) => _SourceOriginPicker(source: source),
   );
   if (repository == null || !context.mounted) return;
-  await showPopUpWidget(
-    context,
-    SourceRepositoryCatalogPage(repository: repository, sourceToLink: source),
-  );
+  // The entry must come from the chosen repository's catalog: it is the only
+  // authority on the address and the version being switched to.
+  final store = SourceRepositories.instance;
+  final entry = await _confirmLink(context, store, repository, source);
+  if (entry == null || !context.mounted) return;
+  if (entry.url == source.url) {
+    // Same address: the script is already this copy, so only the update link
+    // needs to move.
+    try {
+      await store.link(source.key, repository, entry);
+      if (context.mounted) {
+        context.showMessage(
+          message: 'Updates now follow @repo'.tlParams({
+            'repo': repository.name,
+          }),
+        );
+      }
+    } catch (error) {
+      if (context.mounted) {
+        context.showMessage(message: sourceFailureMessage(error));
+      }
+    }
+    return;
+  }
+  final confirmed = await _confirmSwitch(context, source, repository, entry);
+  if (confirmed != true || !context.mounted) return;
+  try {
+    SourceInstallationsScope.of(
+      context,
+    ).replaceFromRepository(repository, entry);
+    if (context.mounted) {
+      context.showMessage(
+        message: 'Switching to @version from @repo'.tlParams({
+          'version': entry.version,
+          'repo': repository.name,
+        }),
+      );
+    }
+  } catch (error) {
+    if (context.mounted) {
+      context.showMessage(message: sourceFailureMessage(error));
+    }
+  }
+}
+
+/// Confirms replacing a working script with another repository's copy.
+///
+/// Settings belong to the script that defined them, so the reader has to know
+/// before the swap that the source's own settings and account will need setting
+/// up again.
+Future<bool?> _confirmSwitch(
+  BuildContext context,
+  ComicSource source,
+  SourceRepository repository,
+  SourceCatalogEntry entry,
+) => showDialog<bool>(
+  context: context,
+  builder: (context) => AlertDialog(
+    title: Text('Switch to this copy?'.tl),
+    content: Text(
+      'The source "@name" is already installed at version @from from another repository. Switching replaces its script with version @to from @repo. Reading progress and finished chapters are kept; the source’s own settings and account will need setting up again, and favorites saved under the old implementation may no longer open.'
+          .tlParams({
+            'name': source.name,
+            'from': source.version,
+            'to': entry.version,
+            'repo': repository.name,
+          }),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.of(context).pop(false),
+        child: Text('Cancel'.tl),
+      ),
+      FilledButton(
+        onPressed: () => Navigator.of(context).pop(true),
+        child: Text('Switch'.tl),
+      ),
+    ],
+  ),
+);
+
+/// Finds [source] in [repository]'s catalog and confirms the relink.
+Future<SourceCatalogEntry?> _confirmLink(
+  BuildContext context,
+  SourceRepositories store,
+  SourceRepository repository,
+  ComicSource source,
+) async {
+  try {
+    final catalog = await store.load(repository);
+    final entry = store.entryFor(source, catalog.entries);
+    return entry;
+  } on SourceFailure catch (failure) {
+    if (context.mounted) {
+      context.showMessage(message: sourceFailureMessage(failure));
+    }
+  } catch (error) {
+    if (context.mounted) {
+      context.showMessage(message: error.toString());
+    }
+  }
+  return null;
 }
 
 class _SourceOriginPicker extends StatefulWidget {
@@ -824,10 +589,13 @@ class _SourceOriginPickerState extends SettingsSaveState<_SourceOriginPicker> {
           SimpleDialogOption(
             onPressed: busy ? null : () => Navigator.pop(context, repository),
             child: ListTile(
+              dense: true,
               title: Text(repository.name),
+              // One line only: the dialog is a picker, and a wrapped URL made
+              // each choice tall enough to hide the rest of the list.
               subtitle: Text(
                 repository.url,
-                maxLines: 2,
+                maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
             ),
@@ -873,4 +641,114 @@ class SourceManagementEmptyState extends StatelessWidget {
       ],
     ),
   );
+}
+
+/// One repository, drawn as a card with its own update-check switch.
+class _RepositoryCard extends StatelessWidget {
+  const _RepositoryCard({
+    required this.repository,
+    required this.sourceCount,
+    required this.onOpen,
+    required this.onEdit,
+    required this.onRemove,
+    required this.onCopy,
+    required this.onToggle,
+  });
+
+  final SourceRepository repository;
+  final int sourceCount;
+  final VoidCallback onOpen;
+  final VoidCallback onEdit;
+  final VoidCallback onRemove;
+  final VoidCallback onCopy;
+  final ValueChanged<bool> onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final disabled = !repository.enabled;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Material(
+        color: colors.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(10),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          // Browsing a repository is the primary action, so the whole card is
+          // the target; the switch and the menu keep their own hit areas.
+          onTap: onOpen,
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: colors.outlineVariant.withValues(alpha: 0.5),
+                width: 0.6,
+              ),
+            ),
+            padding: const EdgeInsets.fromLTRB(14, 6, 4, 6),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        repository.name,
+                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          color: disabled ? colors.outline : null,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      Text(
+                        '@count sources'.tlParams({'count': '$sourceCount'}),
+                        style: Theme.of(
+                          context,
+                        ).textTheme.bodySmall?.copyWith(color: colors.outline),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                // The linked count used to sit in its own circle beside the
+                // switch, which is why it now lives under the name: three
+                // trailing controls pushed the name into a very narrow column.
+                Tooltip(
+                  message: repository.enabled
+                      ? 'Enabled'.tl
+                      : 'This repository is disabled'.tl,
+                  child: Switch(value: repository.enabled, onChanged: onToggle),
+                ),
+                PopupMenuButton<String>(
+                  tooltip: 'Repository actions'.tl,
+                  padding: EdgeInsets.zero,
+                  onSelected: (action) {
+                    if (action == 'edit') onEdit();
+                    if (action == 'remove') onRemove();
+                    if (action == 'copy') onCopy();
+                  },
+                  itemBuilder: (_) => [
+                    PopupMenuItem(
+                      value: 'edit',
+                      child: Text('Edit repository'.tl),
+                    ),
+                    PopupMenuItem(
+                      value: 'copy',
+                      child: Text('Copy repository'.tl),
+                    ),
+                    PopupMenuItem(
+                      value: 'remove',
+                      child: Text('Remove repository'.tl),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }

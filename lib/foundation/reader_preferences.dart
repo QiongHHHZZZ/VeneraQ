@@ -2,102 +2,34 @@ import 'preferences.dart';
 
 abstract final class ReaderPreferences {
   static const modes = [
-    'waterfallTopToBottom',
     'galleryLeftToRight',
     'galleryRightToLeft',
     'galleryTopToBottom',
     'continuousTopToBottom',
-    'continuousLeftToRight',
-    'continuousRightToLeft',
   ];
+  // Stored 'waterfallTopToBottom' values normalize to this replacement mode.
+  // The removed horizontal continuous modes are no longer valid choices, so
+  // they also fall back to the remaining continuous mode on read.
   static const readerMode = ChoicePreference(
     'readerMode',
-    'waterfallTopToBottom',
-    modes,
-  );
-  static const pagedReaderMode = ChoicePreference(
-    'pagedReaderMode',
-    'galleryRightToLeft',
-    modes,
-  );
-  static const longStripReaderMode = ChoicePreference(
-    'longStripReaderMode',
     'continuousTopToBottom',
     modes,
+    aliases: {'waterfallTopToBottom': 'continuousTopToBottom'},
   );
-  static const quickCollectImage = ChoicePreference('quickCollectImage', 'No', [
-    'No',
-    'DoubleTap',
-    'Swipe',
-  ]);
-  static const autoReaderMode = BoolPreference('autoReaderMode', false);
-  static const longPressAction = ChoicePreference('longPressAction', 'zoom', [
-    'zoom',
-    'autoReading',
-    'none',
-  ], legacyNullDefault: true);
-  static const longPressZoomPosition = ChoicePreference(
-    'longPressZoomPosition',
-    'press',
-    ['press', 'center'],
-  );
-  static const autoScrollStyle = ChoicePreference('autoScrollStyle', 'smooth', [
-    'smooth',
-    'stepped',
-  ]);
-  static const eInkRefreshStyle = ChoicePreference(
-    'eInkRefreshStyle',
-    'black',
-    ['black', 'white', 'whiteThenBlack'],
-  );
-  static const autoPageTurningInterval = NumericPreference(
-    'autoPageTurningInterval',
-    5,
-    min: 1,
-    max: 20,
-    step: 1,
-    integer: false,
-  );
-  static const autoScrollSpeed = NumericPreference(
-    'autoScrollSpeed',
-    80,
-    min: 10,
-    max: 1000,
-    step: 10,
-    integer: false,
-  );
-  static const autoScrollFrequency = NumericPreference(
-    'autoScrollFrequency',
-    2,
-    min: 1,
-    max: 10,
-    step: 1,
-    integer: false,
-  );
-  static const autoScrollDistance = NumericPreference(
-    'autoScrollDistance',
-    40,
-    min: 10,
-    max: 500,
-    step: 10,
-    integer: false,
-  );
-  static const readerScrollSpeed = NumericPreference(
-    'readerScrollSpeed',
-    1,
-    min: 0.5,
-    max: 3,
-    step: 0.1,
-    integer: false,
-  );
-  static const readerSideMargin = NumericPreference(
-    'readerSideMargin',
-    0,
-    min: 0,
-    max: 30,
-    step: 1,
-    integer: false,
-  );
+  // `pagedReaderMode`, `longStripReaderMode` and `autoReaderMode` were removed
+  // with automatic layout selection. Values left in existing user data are no
+  // longer read, so they cannot influence the effective mode.
+  // `longPressAction` and `longPressZoomPosition` were removed with the
+  // long-press action group: the reader now always zooms at the press position
+  // on long press. Stored `none`, `autoReading` or `center` values are no longer
+  // read, so they cannot disable or redirect the gesture.
+  // `autoScrollStyle`, `autoPageTurningInterval`, `autoScrollSpeed`,
+  // `autoScrollFrequency`, `autoScrollDistance`, `readerScrollSpeed`,
+  // `readerSideMargin`, `autoReadingKeepScreenOn`,
+  // `autoReadingSkipUnavailableImages`, `autoReadingImageWaitSeconds` and
+  // `autoReadingPauseOnLongPress` were removed with automatic reading and the
+  // related display options. Values left in existing user data are no longer
+  // read, so they cannot influence the reader.
   static const readerBrightness = NumericPreference(
     'readerBrightness',
     50,
@@ -122,52 +54,14 @@ abstract final class ReaderPreferences {
     step: 1,
     integer: true,
   );
-  static const eInkRefreshDuration = NumericPreference(
-    'eInkRefreshDuration',
-    100,
-    min: 100,
-    max: 1500,
-    step: 100,
-    integer: true,
-  );
-  static const eInkRefreshInterval = NumericPreference(
-    'eInkRefreshInterval',
-    1,
-    min: 1,
-    max: 10,
-    step: 1,
-    integer: true,
-  );
-  static const preloadImageCount = NumericPreference(
-    'preloadImageCount',
-    4,
-    min: 1,
-    max: 16,
-    step: 1,
-    integer: true,
-  );
+
+  /// Continue to the next chapter at the chapter end.
+  ///
+  /// The storage key is historical: the setting started as an automatic
+  /// reading option and now also drives cross-chapter continuous reading. The
+  /// key is kept unchanged so existing preferences keep their value.
   static const autoReadingAcrossChapters = BoolPreference(
     'autoReadingAcrossChapters',
-    true,
-  );
-  static const autoReadingKeepScreenOn = BoolPreference(
-    'autoReadingKeepScreenOn',
-    true,
-  );
-  static const autoReadingSkipUnavailableImages = BoolPreference(
-    'autoReadingSkipUnavailableImages',
-    false,
-  );
-  static const autoReadingImageWaitSeconds = NumericPreference(
-    'autoReadingImageWaitSeconds',
-    10,
-    min: 1,
-    max: 60,
-    step: 1,
-    integer: false,
-  );
-  static const autoReadingPauseOnLongPress = BoolPreference(
-    'autoReadingPauseOnLongPress',
     true,
   );
   static const enableTapToTurnPages = BoolPreference(
@@ -186,7 +80,6 @@ abstract final class ReaderPreferences {
     'readerBrightnessEnabled',
     false,
   );
-  static const eInkRefreshEnabled = BoolPreference('eInkRefreshEnabled', false);
   static const limitImageWidth = BoolPreference('limitImageWidth', true);
   static const enableTurnPageByVolumeKey = BoolPreference(
     'enableTurnPageByVolumeKey',
@@ -200,79 +93,49 @@ abstract final class ReaderPreferences {
     'showPageNumberInReader',
     true,
   );
-  static const showImageDimensions = BoolPreference(
-    'showImageDimensions',
-    false,
-  );
   static const showSingleImageOnFirstPage = BoolPreference(
     'showSingleImageOnFirstPage',
     false,
   );
+
+  /// Double tap zooms in/out. A stored `false` keeps its original meaning and
+  /// makes a single tap act immediately instead of waiting for the second one.
   static const enableDoubleTapToZoom = BoolPreference(
     'enableDoubleTapToZoom',
     true,
   );
+
+  /// Long press zooms at the press position until release. Disabling it keeps
+  /// the long press inert instead of turning it into another action.
+  static const enableLongPressToZoom = BoolPreference(
+    'enableLongPressToZoom',
+    true,
+  );
+
   static const showSystemStatusBar = BoolPreference(
     'showSystemStatusBar',
     false,
   );
-  static const showChapterComments = BoolPreference(
-    'showChapterComments',
-    true,
-  );
-  static const showChapterCommentsAtEnd = BoolPreference(
-    'showChapterCommentsAtEnd',
-    false,
-  );
-  static const splitDualPage = BoolPreference('splitDualPage', false);
-  static const splitDualPageInvert = BoolPreference(
-    'splitDualPageInvert',
-    false,
-  );
+  // `showChapterComments` and `showChapterCommentsAtEnd` were removed with the
+  // chapter comments entry point; the reader no longer loads chapter comments.
   static const all = <Preference<Object>>[
     readerMode,
-    pagedReaderMode,
-    longStripReaderMode,
-    quickCollectImage,
-    autoReaderMode,
-    longPressAction,
-    longPressZoomPosition,
-    autoScrollStyle,
-    eInkRefreshStyle,
-    autoPageTurningInterval,
-    autoScrollSpeed,
-    autoScrollFrequency,
-    autoScrollDistance,
-    readerScrollSpeed,
-    readerSideMargin,
     readerBrightness,
     readerScreenPicNumberForPortrait,
     readerScreenPicNumberForLandscape,
-    eInkRefreshDuration,
-    eInkRefreshInterval,
-    preloadImageCount,
     autoReadingAcrossChapters,
-    autoReadingKeepScreenOn,
-    autoReadingSkipUnavailableImages,
-    autoReadingImageWaitSeconds,
-    autoReadingPauseOnLongPress,
     enableTapToTurnPages,
     reverseTapToTurnPages,
     enablePageAnimation,
     readerBrightnessEnabled,
-    eInkRefreshEnabled,
     limitImageWidth,
     enableTurnPageByVolumeKey,
     enableClockAndBatteryInfoInReader,
     showPageNumberInReader,
-    showImageDimensions,
     showSingleImageOnFirstPage,
     enableDoubleTapToZoom,
+    enableLongPressToZoom,
     showSystemStatusBar,
-    showChapterComments,
-    showChapterCommentsAtEnd,
-    splitDualPage,
-    splitDualPageInvert,
   ];
   static Map<String, Object?> get storageDefaults => {
     for (final preference in all) preference.key: preference.storageDefault,

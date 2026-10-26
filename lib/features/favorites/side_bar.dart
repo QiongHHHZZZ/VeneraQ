@@ -12,7 +12,9 @@ import 'package:venera_next/features/favorites/favorite_actions.dart';
 import 'package:venera_next/features/favorites/favorites_constants.dart';
 import 'package:venera_next/features/favorites/favorites_manager.dart';
 import 'package:venera_next/features/favorites/folder_order_dialog.dart';
+import 'package:venera_next/features/favorites/rename_favorite_folder_dialog.dart';
 import 'package:venera_next/routing/app_navigation.dart';
+import 'package:venera_next/foundation/app_data_operations.dart';
 import 'package:venera_next/foundation/appdata.dart';
 import 'package:venera_next/foundation/context.dart';
 import 'package:venera_next/foundation/log.dart';
@@ -67,8 +69,10 @@ class _FavoritesFolderSidebarState extends State<FavoritesFolderSidebar>
 
   void findNetworkFolders() {
     networkFolders.clear();
+    // A source that is not logged in has no reachable favorites: listing it
+    // would open a page that can only report "Not login".
     var all = ComicSource.all()
-        .where((e) => e.favoriteData != null)
+        .where((e) => e.favoriteData != null && e.isLogged)
         .map((e) => e.favoriteData!.key)
         .toList();
     var settings = GlobalPreferenceStore(
@@ -95,6 +99,17 @@ class _FavoritesFolderSidebarState extends State<FavoritesFolderSidebar>
   }
 
   @override
+  void didUpdateWidget(FavoritesFolderSidebar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // The highlight is drawn from widget.selectedFolder, so a new selection has
+    // to rebuild. Without this the drawer only updated when reopened.
+    if (oldWidget.selectedFolder != widget.selectedFolder ||
+        oldWidget.isNetworkSelected != widget.isNetworkSelected) {
+      setState(() {});
+    }
+  }
+
+  @override
   void dispose() {
     appdata.settings.removeListener(updateFolders);
     _manager.removeListener(updateFolders);
@@ -116,23 +131,16 @@ class _FavoritesFolderSidebarState extends State<FavoritesFolderSidebar>
       ),
       child: Column(
         children: [
-          if (widget.withAppbar)
-            SizedBox(
-              height: 56,
-              child: Row(
-                children: [
-                  const SizedBox(width: 8),
-                  const CloseButton(),
-                  const SizedBox(width: 8),
-                  Text("Folders".tl, style: ts.s18),
-                ],
-              ),
-            ).paddingTop(context.padding.top),
+          // The drawer needs no heading of its own: the navigation bar above it
+          // already names the destination, and repeating it wasted a whole row.
           Expanded(
             child: ListView.builder(
               padding: widget.withAppbar
                   ? EdgeInsets.zero
                   : EdgeInsets.only(top: context.padding.top),
+              // Extra rows at the end: one each for the local title, the "All"
+              // folder and the network title. The library entry that used to
+              // follow the network folders is gone with the local comics page.
               itemCount: folders.length + networkFolders.length + 3,
               itemBuilder: (context, index) {
                 if (index == 0) {
@@ -167,8 +175,16 @@ class _FavoritesFolderSidebarState extends State<FavoritesFolderSidebar>
         children: [
           Icon(Icons.local_activity, color: context.colorScheme.secondary),
           const SizedBox(width: 12),
-          Text("Local".tl),
-          const Spacer(),
+          // "Local" alone collides with the local comics library, which holds
+          // downloaded files; this section is the local favorites. The title
+          // yields to the menu on narrow sidebars.
+          Expanded(
+            child: Text(
+              "Local Favorites".tl,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
           MenuButton(
             entries: [
               MenuEntry(
@@ -225,8 +241,13 @@ class _FavoritesFolderSidebarState extends State<FavoritesFolderSidebar>
         children: [
           Icon(Icons.cloud, color: context.colorScheme.secondary),
           const SizedBox(width: 12),
-          Text("Network".tl),
-          const Spacer(),
+          Expanded(
+            child: Text(
+              "Network Favorites".tl,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
           IconButton(
             icon: const Icon(Icons.settings),
             onPressed: () {
@@ -244,6 +265,9 @@ class _FavoritesFolderSidebarState extends State<FavoritesFolderSidebar>
   Widget buildLocalFolder(String name) {
     bool isSelected =
         name == widget.selectedFolder && !widget.isNetworkSelected;
+    // "All" is a view over every folder, not a folder of its own, so it cannot
+    // be renamed or deleted.
+    final canManage = _canManageFolders && name != localAllFolderLabel;
     int count = 0;
     if (_hasManager) {
       count = name == localAllFolderLabel
@@ -261,6 +285,9 @@ class _FavoritesFolderSidebarState extends State<FavoritesFolderSidebar>
         widget.onFolderSelected(false, name);
         widget.onSelected?.call();
       },
+      // "All" is not a real folder; only a stored one can be renamed or
+      // deleted, so the menu is offered on the named ones alone.
+      onLongPress: canManage ? () => _showFolderMenu(name) : null,
       child: Container(
         height: 42,
         alignment: Alignment.centerLeft,
@@ -294,6 +321,119 @@ class _FavoritesFolderSidebarState extends State<FavoritesFolderSidebar>
         ),
       ),
     );
+  }
+
+  /// Whether [name] is a folder the reader can rename or delete.
+  bool get _canManageFolders => _hasManager;
+
+  /// Rename and delete for one folder.
+  ///
+  /// Long press rather than a permanent icon: these rows are narrow, and the
+  /// actions are rare next to opening a folder.
+  void _showFolderMenu(String name) {
+    if (!_canManageFolders) return;
+    final owner = WindowSelectionTask(context);
+    if (!owner.canPresent) return;
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.drive_file_rename_outline),
+              title: Text('Rename Folder'.tl),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _renameFolder(name);
+              },
+            ),
+            ListTile(
+              leading: Icon(
+                Icons.delete_outline,
+                color: sheetContext.colorScheme.error,
+              ),
+              title: Text(
+                'Delete Folder'.tl,
+                style: TextStyle(color: sheetContext.colorScheme.error),
+              ),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _deleteFolder(name);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _renameFolder(String name) async {
+    if (!_canManageFolders) return;
+    final target = name;
+    final manager = _manager;
+    final generation = _managerGeneration;
+    bool current() =>
+        mounted && _hasManager && manager.connectionGeneration == generation;
+    await showDialog<void>(
+      context: context,
+      builder: (_) => RenameFavoriteFolderDialog(
+        initialName: target,
+        folders: manager.folderNames,
+        isCurrent: current,
+        rename: (next) => manager.rename(target, next),
+      ),
+    );
+    if (!current()) return;
+    updateFolders();
+  }
+
+  Future<void> _deleteFolder(String name) async {
+    if (!_canManageFolders) return;
+    final target = name;
+    final manager = _manager;
+    final generation = _managerGeneration;
+    bool current() =>
+        mounted && _hasManager && manager.connectionGeneration == generation;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Delete folder?'.tl),
+        content: Text(
+          'The favorites in "@folder" are removed as well. The comics '
+                  'themselves are not touched.'
+              .tlParams({'folder': target}),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text('Cancel'.tl),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text('Delete'.tl),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !current()) return;
+    try {
+      await AppDataOperations.instance.access(() async {
+        if (!current()) return;
+        await manager.deleteFolder(target);
+      });
+    } catch (error, stack) {
+      Log.error('Delete favorite folder', error, stack);
+      if (mounted) context.showMessage(message: error.toString());
+      return;
+    }
+    if (!current()) return;
+    // The open folder may have just gone; fall back to "All" so the shelf is
+    // never left pointing at a folder that no longer exists.
+    if (widget.selectedFolder == target) {
+      widget.onFolderSelected(false, localAllFolderLabel);
+    }
+    updateFolders();
   }
 
   Widget buildNetworkFolder(String key) {

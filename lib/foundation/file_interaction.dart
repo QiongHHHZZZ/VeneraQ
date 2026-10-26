@@ -7,12 +7,10 @@ import 'package:flutter_file_dialog/flutter_file_dialog.dart';
 import 'package:flutter_saf/flutter_saf.dart';
 import 'package:venera_next/foundation/app.dart';
 import 'package:venera_next/foundation/file_system.dart';
-import 'package:share_plus/share_plus.dart' as s;
 import 'package:venera_next/foundation/file_type.dart';
 import 'file_save_operation.dart';
 import 'selection_operation.dart';
 import 'platform_dialog_queue.dart';
-import 'share_file_operation.dart';
 import 'file_selection.dart';
 import 'directory_selection.dart';
 export 'directory_selection.dart';
@@ -110,6 +108,23 @@ class DirectoryPicker {
 
 final _fileDialogs = PlatformDialogQueue();
 
+/// The lower-case extension of [name], ignoring a duplicate-name marker.
+///
+/// A file manager that copies a download appends `` (2)`` (then `` (3)``) after
+/// the extension: `backup.venera (2)`. Reading the tail verbatim rejected a
+/// valid backup as an unsupported file type, so the marker is stripped first.
+String fileExtension(String name) {
+  var trimmed = name.trim();
+  while (true) {
+    final withoutMarker = trimmed.replaceFirst(RegExp(r'\s*\(\d+\)$'), '');
+    if (withoutMarker == trimmed) break;
+    trimmed = withoutMarker;
+  }
+  final dot = trimmed.lastIndexOf('.');
+  if (dot < 0 || dot == trimmed.length - 1) return '';
+  return trimmed.substring(dot + 1).trim().toLowerCase();
+}
+
 Future<FileSelection?> selectFile({
   required List<String> ext,
   void Function()? checkStop,
@@ -150,7 +165,7 @@ Future<FileSelection?> selectFile({
       }
       if (!ext
           .map((value) => value.toLowerCase())
-          .contains(file.name.split('.').last.toLowerCase())) {
+          .contains(fileExtension(file.name))) {
         await file.dispose();
         throw FormatException(
           'Invalid file type: ${file.name.split('.').last}',
@@ -307,57 +322,4 @@ final class _IOOverrides extends IOOverrides {
 
 T overrideIO<T>(T Function() f) {
   return IOOverrides.runWithIOOverrides<T>(f, _IOOverrides());
-}
-
-class Share {
-  static final _dialogs = PlatformDialogQueue();
-
-  static Future<void> shareFile({
-    required Uint8List data,
-    required String filename,
-    required String mime,
-    Rect? origin,
-    Rect Function()? resolveOrigin,
-    void Function()? checkStop,
-  }) => _dialogs.run(() async {
-    checkStop?.call();
-    if (App.isLinux) {
-      throw UnsupportedError('File sharing is unavailable on Linux');
-    }
-    Rect? actualOrigin;
-    await withShareFileSource(
-      data: data,
-      filename: filename,
-      cacheDirectory: Directory(FilePath.join(App.cachePath, 'shares')),
-      // Android copies the input before acknowledging the method. The other
-      // platforms can pass its URL/path to a receiver after acknowledgment.
-      retainAfterDispatch: !App.isAndroid,
-      checkStop: () {
-        checkStop?.call();
-        actualOrigin = resolveOrigin?.call() ?? origin;
-      },
-      share: (source) => s.SharePlus.instance.share(
-        s.ShareParams(
-          files: [s.XFile(source.path, mimeType: mime)],
-          title: source.name,
-          sharePositionOrigin: actualOrigin,
-        ),
-      ),
-    );
-  });
-
-  static Future<void> shareText(
-    String text, {
-    Rect? origin,
-    Rect Function()? resolveOrigin,
-    bool Function()? canShare,
-  }) => _dialogs.run(() async {
-    if (canShare?.call() == false) return;
-    await s.SharePlus.instance.share(
-      s.ShareParams(
-        text: text,
-        sharePositionOrigin: resolveOrigin?.call() ?? origin,
-      ),
-    );
-  });
 }

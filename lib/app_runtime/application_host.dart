@@ -3,9 +3,7 @@ import 'package:venera_next/foundation/app_data_operations.dart';
 import 'package:venera_next/foundation/application_update_service.dart';
 import 'package:venera_next/foundation/selection_operation.dart';
 
-import 'package:venera_next/features/sync/data_sync_controller.dart';
 import 'package:venera_next/features/comic_source/comic_source_api.dart';
-import 'package:venera_next/features/follow_updates/follow_updates_runtime.dart';
 
 import 'core_bootstrap.dart';
 import 'window_placement.dart';
@@ -17,7 +15,6 @@ import 'application_updates.dart';
 class ApplicationHost {
   ApplicationHost({
     required this.core,
-    required this.sync,
     this.placement,
     this.sourceInstallations,
     SourceUpdateService? sourceUpdates,
@@ -33,7 +30,6 @@ class ApplicationHost {
        dataOperations = dataOperations ?? AppDataOperations.instance;
 
   final CoreBootstrap core;
-  final DataSyncController sync;
   final WindowPlacementHost? placement;
   final SourceUpdateService sourceUpdates;
   final SourceInstallations? sourceInstallations;
@@ -44,8 +40,6 @@ class ApplicationHost {
   final _finalDrains = <Future<void> Function()>{};
   ApplicationMount? _current;
   bool _closing = false;
-  bool _syncPrepared = false;
-  bool _syncClosed = false;
   Future<void>? _coreClose;
   Future<void>? _attempt;
 
@@ -77,7 +71,6 @@ class ApplicationHost {
     final attempt = _attempt;
     if (attempt != null) return attempt;
     _closing = true;
-    sync.stop();
     final done = Completer<void>();
     _attempt = done.future;
     _close().then(
@@ -114,12 +107,6 @@ class ApplicationHost {
     ]);
     await attempt('application updates', applicationUpdates.closeAndWait);
     await attempt('window writes', _drainWindows);
-    if (!_syncPrepared) {
-      await attempt('sync preparation', () async {
-        await sync.prepareForExit();
-        _syncPrepared = true;
-      });
-    }
     // A failed owner may still retain resources. Do not invalidate its core
     // dependencies merely because its close Future has settled with an error.
     if (failures.isNotEmpty) throw ApplicationCloseFailure(failures);
@@ -127,17 +114,12 @@ class ApplicationHost {
     await attempt('core producers', core.prepareForClose);
     await attempt('window writes', _drainWindows);
     if (failures.isNotEmpty) throw ApplicationCloseFailure(failures);
-    // Keep sync observation alive through all admitted writes. Its final save
-    // owns the last exclusive admission; stores are released only after that
-    // save succeeds. A failed save can retry without reopening business work.
+    // Keep data observation alive through all admitted writes. Stores are
+    // released only after the final persistence succeeds.
     await attempt(
       'final persistence and stores',
       () => dataOperations.closeAndWait(
         finalize: () async {
-          if (!_syncClosed) {
-            await sync.closeAndWait();
-            _syncClosed = true;
-          }
           // Store close methods use the same admission protocol. Producers have
           // already stopped outside this scope; only their cached closes remain.
           await (_coreClose ??= core.close());
@@ -158,14 +140,12 @@ class ApplicationHost {
 }
 
 Future<void> closeApplicationMountBindings({
-  required FollowUpdatesRuntime followUpdates,
   required InteractiveBindings interactive,
   Future<void> Function()? closeStartupUpdates,
 }) async {
   final failures = <ApplicationCloseDiagnostic>[];
   await Future.wait([
     for (final owner in <({String name, Future<void> Function() close})>[
-      (name: 'follow updates', close: followUpdates.closeAndWait),
       (name: 'platform bindings', close: interactive.dispose),
       if (closeStartupUpdates != null)
         (name: 'startup updates', close: closeStartupUpdates),

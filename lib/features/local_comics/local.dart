@@ -5,9 +5,6 @@ import 'local_chapter_storage.dart';
 import 'local_deletion_paths.dart';
 import 'local_related_data.dart';
 import 'local_deletion_journal.dart';
-import 'local_registration_storage.dart';
-import 'package:venera_next/features/favorites/favorites_api.dart';
-import 'package:venera_next/foundation/persistence_failure.dart';
 import 'package:venera_next/foundation/sqlite_transaction.dart';
 import 'download_task_store.dart';
 import 'download_directory_allocator.dart';
@@ -19,10 +16,9 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_saf/flutter_saf.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:path/path.dart' as p;
 import 'package:sqlite3/sqlite3.dart';
 import 'package:venera_next/features/comic_source/comic_source_api.dart';
-import 'package:venera_next/features/comic_storage/comic_storage.dart';
+import 'package:venera_next/foundation/comic_storage.dart';
 import 'package:venera_next/foundation/comic_type.dart';
 import 'package:venera_next/foundation/log.dart';
 import 'package:venera_next/foundation/sqlite_connection.dart';
@@ -84,6 +80,23 @@ class LocalManager with ChangeNotifier implements DownloadTaskStorage {
 
   /// The live default owner, without creating a replacement during shutdown.
   static LocalManager? get current => _instance;
+
+  /// Fires whenever a download queue could have gained or lost work.
+  ///
+  /// The toolbar needs this instead of listening to [current] directly: the
+  /// manager only exists after bootstrap creates it, so a listener attached to
+  /// a null `current` would never see the first download and the queue entry
+  /// would never appear. This notifier always exists and is driven by the
+  /// manager as it is created.
+  static final ChangeNotifier downloadActivity = _DownloadActivityNotifier();
+
+  /// Whether any download is queued or running, without requiring the manager
+  /// to have been created yet.
+  static bool get hasActiveDownloads =>
+      _instance?.downloadingTasks.isNotEmpty ?? false;
+
+  /// Called by the manager whenever its task list changes.
+  static void _notifyDownloadActivity() => downloadActivity.notifyListeners();
 
   LocalManager._({
     Database Function(String)? openDatabase,
@@ -408,54 +421,6 @@ class LocalManager with ChangeNotifier implements DownloadTaskStorage {
     notifyListeners();
   }
 
-  /// Called synchronously from the owning favorites mutation queue.
-  void addWithFavorite(
-    LocalComic comic,
-    String id, {
-    required String favoritesPath,
-    required String folder,
-    required FavoriteItem favorite,
-    required String translatedTags,
-    required bool append,
-  }) {
-    PersistenceFailure? failure;
-    try {
-      LocalComicStorageGuard.instance.write(
-        () => registerLocalComicRecords(
-          localDatabase: _db,
-          comic: comic,
-          id: id,
-          favoritesPath: favoritesPath,
-          folder: folder,
-          favorite: favorite,
-          translatedTags: translatedTags,
-          append: append,
-        ),
-      );
-    } on PersistenceFailure catch (error) {
-      if (error.commitState != PersistenceCommitState.committed) rethrow;
-      failure = error;
-    }
-    _rememberComic(comic, id: id);
-    try {
-      notifyListeners();
-    } catch (error, stack) {
-      Error.throwWithStackTrace(
-        PersistenceFailure(
-          commitState: PersistenceCommitState.committed,
-          cause: failure?.cause ?? error,
-          stackTrace: failure?.stackTrace ?? stack,
-          cleanupFailures: [
-            ...?failure?.cleanupFailures,
-            if (failure != null) (error: error, stackTrace: stack),
-          ],
-        ),
-        failure?.stackTrace ?? stack,
-      );
-    }
-    if (failure != null) Error.throwWithStackTrace(failure, failure.stackTrace);
-  }
-
   void remove(String id, ComicType comicType, {bool notify = true}) {
     LocalComicStorageGuard.instance.write(
       () => _repository.remove(id, comicType),
@@ -479,23 +444,6 @@ class LocalManager with ChangeNotifier implements DownloadTaskStorage {
     _comicLocations[comic] = location;
     return comic;
   }
-
-  /// Capture storage ownership without decoding unrelated comic metadata.
-  List<String> get registeredComicDirectories => _repository
-      .directoryReferences()
-      .map((directory) => _resolveComicDirectory(directory, path))
-      .toList(growable: false);
-
-  /// Resolve legacy relative paths without decoding unrelated metadata. Return
-  /// every matching row so recovery can reject ambiguous shared ownership.
-  List<LocalComic> comicsAtDirectory(String directory) => [
-    for (final stored in _repository.directoryReferences().toSet())
-      if (p.equals(
-        p.absolute(_resolveComicDirectory(stored, path)),
-        p.absolute(directory),
-      ))
-        ..._repository.findByDirectory(stored).map(_rememberComic),
-  ];
 
   /// Control-file cleanup needs the same protection from retained records and
   /// native aliases as directory deletion, even though it never removes pages.
@@ -634,7 +582,12 @@ class LocalManager with ChangeNotifier implements DownloadTaskStorage {
 
   late final _downloadQueue = DownloadQueue(
     commitComic: (comic) => _repository.add(comic),
-    notifyChanged: notifyListeners,
+    // Every queue change also drives the stable activity notifier, so a
+    // listener that predates this manager still learns about downloads.
+    notifyChanged: () {
+      notifyListeners();
+      _notifyDownloadActivity();
+    },
     requestSave: saveCurrentDownloadingTasks,
     reportError: (error, stack) => Log.error('DownloadQueue', error, stack),
   );
@@ -685,6 +638,11 @@ class LocalManager with ChangeNotifier implements DownloadTaskStorage {
   }
 
   Future<void> pauseDownload(DownloadTask task) => _downloadQueue.pause(task);
+
+  /// Stop starting downloads because the connection is metered, or let the
+  /// queue continue once an unmetered link returns.
+  void setDownloadsNetworkBlocked(bool blocked) =>
+      _downloadQueue.setNetworkBlocked(blocked);
 
   Future<void> moveToFirst(DownloadTask task) {
     _storageAccess.check();
@@ -738,9 +696,18 @@ class LocalManager with ChangeNotifier implements DownloadTaskStorage {
   );
 
   /// Install a fully decoded paused snapshot during initialization/recovery.
+  ///
+  /// The queue itself restores silently, because a restore must not look like a
+  /// new download to anything watching it. The manager still announces the
+  /// result: the toolbar's queue entry is attached before this runs and would
+  /// otherwise never appear for downloads restored at startup.
   void restorePausedDownloads(Iterable<DownloadTask> tasks) {
     _storageAccess.check();
     _downloadQueue.restorePausedTasks(tasks);
+    if (_downloadQueue.tasks.isNotEmpty) {
+      notifyListeners();
+      _notifyDownloadActivity();
+    }
   }
 
   void restoreDownloadingTasks() {
@@ -970,4 +937,14 @@ class LocalManager with ChangeNotifier implements DownloadTaskStorage {
     );
     return paths.map(Directory.new).toList();
   }
+}
+
+/// A [ChangeNotifier] that outlives any single [LocalManager].
+///
+/// The toolbar subscribes before the manager necessarily exists, so it cannot
+/// listen to the manager itself. This wrapper always exists and is driven by
+/// whichever manager is live.
+class _DownloadActivityNotifier extends ChangeNotifier {
+  @override
+  void notifyListeners() => super.notifyListeners();
 }

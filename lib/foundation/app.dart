@@ -35,6 +35,7 @@ class _App {
   static const _windowsCompanyDirectory = 'com.veneraq';
   static const _windowsProductDirectory = 'VeneraQ';
   static const _legacyWindowsDirectories = [
+    ('com.github.cyrilpeng', 'VeneraNext'),
     ('CyrilPeng_venera-next', 'VeneraNext'),
     ('CyrilPeng_venera-next', 'venera'),
     ('com.github.wgh136', 'venera'),

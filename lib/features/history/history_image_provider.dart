@@ -33,6 +33,11 @@ class HistoryImageProvider extends BaseImageProvider<HistoryImageProvider> {
     checkStop();
     final id = history.id;
     final type = history.type;
+    // Resolve the source without [ComicType.sourceKey], which throws when the
+    // source was uninstalled or renamed. A history row outlives its source, so
+    // that throw turned every such cover into a failed load; the stored URL is
+    // still worth requesting, just without per-source image config.
+    final sourceKey = type.comicSource?.key;
     var url = history.cover;
     if (!url.contains('/')) {
       var localComic = LocalManager().find(id, type);
@@ -41,22 +46,34 @@ class HistoryImageProvider extends BaseImageProvider<HistoryImageProvider> {
         checkStop();
         return bytes;
       }
-      var comicSource =
-          type.comicSource ??
+      final loadComicInfo =
+          type.comicSource?.loadComicInfo ??
           (throw OperationFailure.message("Comic source not found."));
       final updateMetadata = HistoryManager().metadataUpdaterFor(history);
-      var comic = await comicSource.loadComicInfo!(id);
+      var comic = await loadComicInfo(id);
       checkStop();
       url = comic.data.cover;
-      final updated = await updateMetadata(cover: url);
+      // A position-only entry is missing its whole metadata copy, not just the
+      // cover, so an empty title is repaired here too. Otherwise the list keeps
+      // showing a blank caption beside the recovered artwork.
+      final blankTitle = history.title.trim().isEmpty;
+      final updated = await updateMetadata(
+        cover: url,
+        title: blankTitle ? comic.data.title : null,
+        subtitle: blankTitle ? (comic.data.subTitle ?? '') : null,
+      );
       if (updated && history.id == id && history.type == type) {
         history.cover = url;
+        if (blankTitle) {
+          history.title = comic.data.title;
+          history.subtitle = comic.data.subTitle ?? '';
+        }
       }
       checkStop();
     }
     checkStop();
     final bytes = await readImageStream(
-      loadThumbnail(url, type.sourceKey, id),
+      loadThumbnail(url, sourceKey, id),
       cancelSignal: BaseImageProvider.cancelSignalOf(checkStop),
       checkStop: checkStop,
       onProgress: (progress) => chunkEvents.add(

@@ -1,14 +1,11 @@
 import 'package:venera_next/features/history/history_scope.dart';
 import 'package:flutter/material.dart';
-import 'package:local_auth/local_auth.dart';
 import 'package:venera_next/components/message.dart';
 import 'package:venera_next/components/settings_save_state.dart';
 import 'package:venera_next/features/settings/setting_components.dart';
 import 'package:venera_next/foundation/appdata.dart';
 import 'package:venera_next/foundation/application_preferences.dart';
-import 'package:venera_next/foundation/context.dart';
 import 'package:venera_next/foundation/global_preference_store.dart';
-import 'package:venera_next/foundation/log.dart';
 import 'package:venera_next/foundation/translations.dart';
 
 /// Preview while dragging; only the released choice authorizes cleanup.
@@ -202,108 +199,3 @@ class _CacheLimitDialogState extends SettingsSaveState<_CacheLimitDialog> {
   }
 }
 
-Future<bool> _supportsAuthorization() async {
-  final auth = LocalAuthentication();
-  return await auth.canCheckBiometrics || await auth.isDeviceSupported();
-}
-
-class AuthorizationRequiredSetting extends StatefulWidget {
-  const AuthorizationRequiredSetting({
-    super.key,
-    this.checkSupport = _supportsAuthorization,
-  });
-  final Future<bool> Function() checkSupport;
-  @override
-  State<AuthorizationRequiredSetting> createState() =>
-      _AuthorizationRequiredSettingState();
-}
-
-class _AuthorizationRequiredSettingState
-    extends SettingsSaveState<AuthorizationRequiredSetting> {
-  int _request = 0;
-  bool? _preview;
-
-  @override
-  void initState() {
-    super.initState();
-    appdata.settings.addListener(_refresh);
-  }
-
-  void _refresh() {
-    if (mounted) setState(() {});
-  }
-
-  @override
-  void didUpdateWidget(AuthorizationRequiredSetting oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.checkSupport != widget.checkSupport) {
-      _request++;
-      _preview = null;
-    }
-  }
-
-  Future<void> _change(bool value) async {
-    if (!acceptsSettingsChanges) return;
-    final request = ++_request;
-    final checkSupport = widget.checkSupport;
-    Future<bool>? checked;
-    var supported = true;
-    setState(() => _preview = value);
-    await saveSetting(
-      AppPreferences.authorizationRequired.key,
-      () async {
-        if (value) {
-          // A retry reuses this request's completed read-only support check.
-          checked ??= Future<bool>.sync(checkSupport).catchError((
-            Object error,
-            StackTrace stack,
-          ) {
-            Log.error('Authorization support', error, stack);
-            return false;
-          });
-          supported = await checked!;
-        }
-        if (request != _request) return;
-        await appdata.updateSettings((draft) {
-          if (request != _request) return;
-          GlobalPreferenceStore(
-            draft,
-          ).write(AppPreferences.authorizationRequired, value && supported);
-        });
-      },
-      isCurrent: () => request == _request,
-      onSaved: () {
-        if (value && !supported) {
-          context.showMessage(message: 'Biometrics not supported'.tl);
-        }
-      },
-    );
-    if (request == _request) _preview = null;
-    if (mounted) setState(() {});
-  }
-
-  @override
-  Widget build(BuildContext context) => protectSettings(
-    Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        SwitchListTile(
-          title: Text('Authorization Required'.tl),
-          value:
-              _preview ??
-              GlobalPreferenceStore(
-                appdata.settings,
-              ).read(AppPreferences.authorizationRequired),
-          onChanged: _change,
-        ),
-        settingsSaveStatus,
-      ],
-    ),
-  );
-
-  @override
-  void dispose() {
-    appdata.settings.removeListener(_refresh);
-    super.dispose();
-  }
-}

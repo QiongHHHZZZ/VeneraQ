@@ -6,23 +6,11 @@ import 'package:flutter/material.dart';
 import 'package:venera_next/features/reader/progress_bar.dart';
 import 'package:venera_next/features/reader/bottom_actions.dart';
 import 'package:venera_next/features/reader/top_bar.dart';
-import 'package:venera_next/components/message.dart';
 import 'package:venera_next/features/reader/sidebar_binding.dart';
-import 'package:venera_next/features/history/history_api.dart'
-    show ImageFavoriteResult;
-import 'package:venera_next/features/reader/image_favorite_controller.dart';
 import 'package:venera_next/features/reader/brightness.dart';
-import 'package:venera_next/features/reader/auto_reading.dart';
-import 'package:venera_next/features/reader/chapter_comments.dart';
-import 'package:venera_next/features/reader/comments_controller.dart';
 import 'package:venera_next/features/reader/chapter_navigation.dart';
 import 'package:venera_next/features/reader/chapter_navigation_button.dart';
-import 'package:venera_next/features/reader/chapters.dart';
-import 'package:venera_next/features/reader/chapter_menu.dart';
-import 'package:venera_next/features/reader/eink_refresh.dart';
-import 'package:venera_next/features/reader/eink_refresh_controller.dart';
 import 'package:venera_next/features/reader/gesture_port.dart';
-import 'package:venera_next/features/reader/image_favorite_swipe.dart';
 import 'package:venera_next/features/reader/platform_effects_controller.dart';
 import 'shell_data.dart';
 import 'progress_navigation.dart';
@@ -45,20 +33,13 @@ class ReaderScaffold extends StatefulWidget {
     required this.progress,
     required this.onExit,
     required this.onFullscreen,
-    required this.onToggleAutomaticReading,
-    required this.acquireSidebarPause,
     required this.readImagePickContext,
     required this.imageWork,
     required this.orientation,
     required this.onRotate,
     required this.onSystemUiChanged,
-    required this.createChapterMenu,
-    required this.favoriteChanges,
-    required this.createFavoriteQuery,
-    required this.createImageFavorite,
     required this.createImageExport,
     required this.createSettings,
-    required this.createChapterComments,
     required this.chapterNavigation,
     required this.child,
   });
@@ -67,20 +48,13 @@ class ReaderScaffold extends StatefulWidget {
   final ReaderProgressRequest progress;
   final Future<void> Function() onExit;
   final VoidCallback? onFullscreen;
-  final bool Function() onToggleAutomaticReading;
-  final VoidCallback Function() acquireSidebarPause;
   final ReaderImagePickContext? Function() readImagePickContext;
   final ImageWork imageWork;
   final ReaderOrientation orientation;
   final VoidCallback? onRotate;
   final void Function(bool menuOpen) onSystemUiChanged;
-  final ReaderChapterMenuRequest? Function() createChapterMenu;
-  final Listenable favoriteChanges;
-  final ReaderImageFavoriteQuery? Function() createFavoriteQuery;
-  final ReaderImageFavoriteRequest? Function() createImageFavorite;
   final ReaderImageExportRequest? Function() createImageExport;
   final ReaderSettingsRequest? Function() createSettings;
-  final ReaderChapterCommentsRequest? Function() createChapterComments;
   final ReaderChapterNavigationAction? chapterNavigation;
   final Widget child;
 
@@ -95,8 +69,6 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
 
   bool _brightnessPanelOpen = false;
 
-  final EInkRefreshController _eInkRefreshController = EInkRefreshController();
-
   static const kTopBarHeight = 56.0;
 
   bool get isOpen => _isOpen;
@@ -106,61 +78,34 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
   void onGesturePortChanged(ReaderGesturePort port, bool attached) {
     if (!attached && !identical(_gesturePort, port)) return;
     _gesturePort = attached ? port : null;
-    _imageFavoriteSwipe.attach(_gesturePort);
-    if (attached && mounted) addDragListener();
-  }
-
-  late final _imageFavoriteSwipe = ImageFavoriteSwipeBinding(
-    isVertical: () => widget.data.vertical,
-    collect: addImageFavorite,
-  );
-
-  void addDragListener() {
-    if (!mounted) return;
-    _imageFavoriteSwipe.setEnabled(widget.data.swipeToCollect);
   }
 
   @override
   void initState() {
     super.initState();
     _brightnessPreview.addListener(update);
-    widget.favoriteChanges.addListener(_imageFavoritesChanged);
   }
 
   @override
   void dispose() {
     _brightnessPreview.dispose();
-    widget.favoriteChanges.removeListener(_imageFavoritesChanged);
-    unawaited(_favorites.dispose());
     _sidebarBinding.dispose();
-    _imageFavoriteSwipe.dispose();
     _gesturePort = null;
     unawaited(_exporter?.dispose());
     _imagePicker.dispose();
     _selectionOverlay.dispose();
-    _eInkRefreshController.dispose();
     super.dispose();
   }
 
   @override
   void didUpdateWidget(ReaderScaffold oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!identical(oldWidget.favoriteChanges, widget.favoriteChanges)) {
-      oldWidget.favoriteChanges.removeListener(_imageFavoritesChanged);
-      widget.favoriteChanges.addListener(_imageFavoritesChanged);
-      _favorites.invalidate();
-    }
     if (oldWidget.data.comicId != widget.data.comicId ||
         oldWidget.data.sourceKey != widget.data.sourceKey ||
         !identical(oldWidget.imageWork, widget.imageWork)) {
       _replaceBrightnessPreview();
     }
-    if (oldWidget.data.swipeToCollect != widget.data.swipeToCollect) {
-      addDragListener();
-    }
     if (!identical(oldWidget.imageWork, widget.imageWork)) {
-      unawaited(_favorites.dispose());
-      _favorites = _createFavorites();
       unawaited(_exporter?.dispose());
       _exporter = null;
     }
@@ -190,30 +135,8 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
     if (mounted) setState(() {});
   }
 
-  void requestEInkRefresh() {
-    if (!mounted || !widget.data.gallery) {
-      return;
-    }
-
-    final settings = widget.data.preferences;
-    if (!settings.eInkRefreshEnabled) {
-      _eInkRefreshController.reset();
-      return;
-    }
-    _eInkRefreshController.onPageChanged(
-      interval: settings.eInkRefreshInterval,
-      durationMilliseconds: settings.eInkRefreshDuration,
-      style: EInkRefreshStyle.fromKey(settings.eInkRefreshStyle),
-    );
-  }
-
-  void resetEInkRefreshCounter() {
-    _eInkRefreshController.reset();
-  }
-
   @override
   Widget build(BuildContext context) {
-    final isOnChapterCommentsPage = widget.data.onCommentsPage;
     final brightnessPanelVisible = _isOpen && _brightnessPanelOpen;
     final menuDuration = MediaQuery.disableAnimationsOf(context)
         ? Duration.zero
@@ -231,18 +154,17 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
             child: widget.child,
           ),
         ),
-        if (!isOnChapterCommentsPage)
-          Positioned.fill(
-            child: ReaderBrightnessOverlay(
-              enabled:
-                  _brightnessPreview.enabled ??
-                  widget.data.preferences.readerBrightnessEnabled,
-              brightness:
-                  _brightnessPreview.brightness ??
-                  widget.data.preferences.readerBrightness,
-            ),
+        Positioned.fill(
+          child: ReaderBrightnessOverlay(
+            enabled:
+                _brightnessPreview.enabled ??
+                widget.data.preferences.readerBrightnessEnabled,
+            brightness:
+                _brightnessPreview.brightness ??
+                widget.data.preferences.readerBrightness,
           ),
-        if (!isOnChapterCommentsPage) _buildInformation(),
+        ),
+        _buildInformation(),
         ReaderChapterNavigationButton(action: widget.chapterNavigation),
         AnimatedPositioned(
           duration: menuDuration,
@@ -278,9 +200,6 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
             child: buildBrightnessPanel(),
           ),
         ),
-        Positioned.fill(
-          child: EInkRefreshOverlay(controller: _eInkRefreshController),
-        ),
       ],
     );
   }
@@ -299,14 +218,6 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
     chapterTitle: widget.data.chapterTitle,
     onBack: () => unawaited(widget.onExit()),
     actions: [
-      if (shouldShowChapterComments())
-        Tooltip(
-          message: "Chapter Comments".tl,
-          child: IconButton(
-            icon: const Icon(Icons.comment),
-            onPressed: openChapterComments,
-          ),
-        ),
       Tooltip(
         message: "Settings".tl,
         child: IconButton(
@@ -317,43 +228,6 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
     ],
   );
 
-  late var _favorites = _createFavorites();
-
-  ReaderImageFavoriteController
-  _createFavorites() => ReaderImageFavoriteController(
-    work: widget.imageWork,
-    onChanged: () {
-      if (mounted) update();
-    },
-    cancelSelection: _selectionOverlay.cancel,
-    onUnsupported: () => showToast(
-      message: 'Local comic collection is not supported at present'.tl,
-      context: context,
-    ),
-    onResult: (result) => showToast(
-      message: switch (result) {
-        ImageFavoriteResult.protectedCover =>
-          'The cover cannot be uncollected here'.tl,
-        ImageFavoriteResult.chapterOrderChanged =>
-          'The chapter order of the comic may have changed, temporarily not supported for collection'
-              .tl,
-        ImageFavoriteResult.collected => 'Successfully collected'.tl,
-        ImageFavoriteResult.uncollected => 'Uncollected the image'.tl,
-      },
-      context: context,
-      seconds: 1,
-    ),
-    onError: (error, stack) {
-      Log.error('Image Favorite', error, stack);
-      showToast(message: error.toString(), context: context, seconds: 1);
-    },
-  );
-
-  void _imageFavoritesChanged() => _favorites.invalidate();
-
-  void addImageFavorite() =>
-      unawaited(_favorites.collect(widget.createImageFavorite(), _pickImage));
-
   Future<int?> _pickImage() async {
     final selection = await _imagePicker.pick();
     return selection != null &&
@@ -362,16 +236,11 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
         : null;
   }
 
-  Widget buildBottom() {
-    _favorites.bind(widget.createFavoriteQuery());
-    return _buildBottom();
-  }
+  Widget buildBottom() => _buildBottom();
 
   Widget _buildBottom() {
     // Use maxPage for display (excluding chapter comments page)
     final progress = widget.progress;
-    final toggleAutomaticReading = widget.onToggleAutomaticReading;
-    final work = widget.imageWork;
     final displayPage = progress.page.clamp(1, progress.maxPage);
     var text = "E${progress.chapter} : P$displayPage";
     if (!widget.data.hasChapters) {
@@ -389,10 +258,6 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
 
     final buttons = buildReaderBottomActions(
       context,
-      imageFavoriteStatus: _favorites.status,
-      imageCollecting: _favorites.collecting,
-      onCollect: _favorites.canCollect ? addImageFavorite : null,
-      onRetryImageStatus: _favorites.retry,
       onFullscreen: widget.onFullscreen,
       orientation: widget.orientation,
       onRotate: widget.onRotate,
@@ -401,25 +266,7 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
           widget.data.preferences.readerBrightnessEnabled,
       onBrightness: () =>
           setState(() => _brightnessPanelOpen = !_brightnessPanelOpen),
-      automaticReading: ReaderAutomaticReadingAction(
-        tooltip: switch (widget.data.automaticReading) {
-          AutoReadingStatus.waiting =>
-            'Automatic reading is waiting for content'.tl,
-          AutoReadingStatus.paused => 'Automatic reading is paused'.tl,
-          _ => 'Start or stop automatic reading'.tl,
-        },
-        active: widget.data.automaticReadingActive,
-        playing: widget.data.automaticReadingActive,
-        onPressed: () {
-          if (!mounted || !identical(widget.imageWork, work)) return;
-          final active = toggleAutomaticReading();
-          if (mounted && active && isOpen) openOrClose();
-          update();
-        },
-      ),
-      onChapters: widget.data.hasChapters ? openChapterDrawer : null,
       onSave: saveCurrentImage,
-      onShare: share,
     );
 
     return ReaderBottomBar(
@@ -487,24 +334,6 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
     );
   }
 
-  void openChapterDrawer() {
-    final request = widget.createChapterMenu();
-    if (request == null) return;
-    ReaderSidebarHandle? handle;
-    handle = _sidebarBinding.show(
-      context,
-      ReaderChaptersView(
-        data: request.data,
-        onSelect: (chapter) {
-          if (handle?.isCurrent != true) return;
-          request.select(chapter);
-          handle?.close();
-        },
-        onClose: () => handle?.close(),
-      ),
-    );
-  }
-
   ReaderImageExportBinding? _exporter;
   ReaderImageExportBinding get _imageExporter =>
       _exporter ??= ReaderImageExportBinding(
@@ -515,8 +344,7 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
         pick: _pickImage,
       );
 
-  void saveCurrentImage() => unawaited(_imageExporter.export(sharing: false));
-  void share() => unawaited(_imageExporter.export(sharing: true));
+  void saveCurrentImage() => unawaited(_imageExporter.export());
 
   void openSetting() {
     final request = widget.createSettings();
@@ -531,7 +359,6 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
       ReaderSettingsPanel(
         request: request,
         work: work,
-        isCurrent: isCurrent,
         onChanged: (key) {
           if (isCurrent()) {
             request.apply(key, applyShellEffect: _applyShellEffect);
@@ -552,9 +379,10 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
     if (!mounted) return;
     switch (effect) {
       case ReaderSettingEffect.rebindImageGesture:
-        addDragListener();
-      case ReaderSettingEffect.resetEInk:
-        resetEInkRefreshCounter();
+        // The gesture detector re-reads its request on every shell change, so
+        // a notification is enough to pick up the new binding. Without this
+        // case the shared effect list throws and the setting is not applied.
+        update();
       case ReaderSettingEffect.updateSystemUi:
         _applySystemUiMode();
       case ReaderSettingEffect.rebuildShell:
@@ -567,16 +395,9 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
   late final _sidebarBinding = ReaderSidebarBinding(
     canOpen: () => mounted,
     acquireInteraction: () {
-      final releasePause = widget.acquireSidebarPause();
       final gesture = gestureDetectorState;
       gesture?.ignoreNextTap();
-      return () {
-        try {
-          releasePause();
-        } finally {
-          gesture?.clearIgnoreNextTap();
-        }
-      };
+      return () => gesture?.clearIgnoreNextTap();
     },
     onError: (error, stack) {
       Log.error('Reader', 'Failed to open sidebar: $error', stack);
@@ -586,26 +407,6 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
 
   void _openSideBar(Widget widget, {double width = 400}) =>
       _sidebarBinding.show(context, widget, width: width);
-
-  bool shouldShowChapterComments() {
-    return widget.createChapterComments() != null;
-  }
-
-  void openChapterComments() {
-    final request = widget.createChapterComments();
-    if (request == null || !request.isCurrent()) return;
-    ReaderSidebarHandle? handle;
-    handle = _sidebarBinding.show(
-      context,
-      ChapterCommentsPage(
-        request: request,
-        work: widget.imageWork,
-        onRetired: () => handle?.close(),
-      ),
-      width: 500,
-      isRequestCurrent: request.isCurrent,
-    );
-  }
 
   late final _imagePicker = ReaderImagePicker(
     current: () => mounted ? widget.readImagePickContext() : null,

@@ -14,20 +14,27 @@ class SmoothCustomScrollView extends StatelessWidget {
     super.key,
     required this.slivers,
     this.controller,
+    this.additionalPhysics,
   });
 
   final ScrollController? controller;
 
   final List<Widget> slivers;
 
+  /// Composed on top of the platform physics, so a caller that needs to
+  /// overscroll an under-filled page (a pull-to-refresh host) can say so
+  /// without replacing the desktop pointer handling below.
+  final ScrollPhysics? additionalPhysics;
+
   @override
   Widget build(BuildContext context) {
     return SmoothScrollProvider(
       controller: controller,
       builder: (context, controller, physics) {
+        final effective = additionalPhysics?.applyTo(physics) ?? physics;
         return CustomScrollView(
           controller: controller,
-          physics: physics,
+          physics: effective,
           slivers: [
             ...slivers,
             SliverPadding(

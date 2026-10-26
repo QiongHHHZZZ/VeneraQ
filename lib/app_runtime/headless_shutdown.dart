@@ -1,12 +1,10 @@
 import 'dart:async';
 
-/// Commands have finished and headless mode never starts automatic sync.
-/// Keep sync bindings alive while source shutdown drains late data changes.
+/// Commands have finished and headless mode never starts automatic work.
 Future<bool> finishHeadlessRuntime({
   required Future<void> Function() prepareCore,
   required Future<void> Function() closeCore,
   required void Function() disposeBindings,
-  required Future<void> Function() flushPersistence,
   required void Function(Map<String, dynamic>) emit,
   required void Function(Object, StackTrace) reportError,
 }) async {
@@ -42,11 +40,6 @@ Future<bool> finishHeadlessRuntime({
     requiredBeforeClose: true,
   );
   await attempt('Failed to release headless bindings', disposeBindings);
-  await attempt(
-    'Failed to persist sync state',
-    flushPersistence,
-    requiredBeforeClose: true,
-  );
   // Stores and directory ownership outlive all producers and final persistence.
   // On a failed drain keep them alive until the failed CLI process exits.
   if (readyToClose) {

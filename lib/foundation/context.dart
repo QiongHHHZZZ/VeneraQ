@@ -12,25 +12,6 @@ void registerShowMessageHandler(
 }
 
 extension Navigation on BuildContext {
-  /// Capture the visible source rectangle before an asynchronous share starts.
-  /// iPad rejects an empty popover origin or one outside its Flutter view.
-  Rect get sharePositionOrigin {
-    if (!mounted) throw StateError('Share source is no longer mounted');
-    final render = findRenderObject();
-    if (render is! RenderBox || !render.attached || !render.hasSize) {
-      throw StateError('Share source has no active layout');
-    }
-    final view = View.of(this);
-    final viewport = Offset.zero & (view.physicalSize / view.devicePixelRatio);
-    final origin = (render.localToGlobal(Offset.zero) & render.size).intersect(
-      viewport,
-    );
-    if (origin.isEmpty || !origin.isFinite) {
-      throw StateError('Share source is outside the current view');
-    }
-    return origin;
-  }
-
   void pop<T>([T? result]) {
     if (NavigationAdmission.allows(this)) {
       Navigator.of(this).pop(result);

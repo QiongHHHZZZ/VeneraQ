@@ -2,6 +2,7 @@ import 'history_cache.dart';
 import 'history_repository.dart';
 import 'history_model.dart';
 import 'history_retention_change.dart';
+import 'read_chapters.dart';
 import 'dart:async';
 import 'dart:isolate';
 
@@ -14,24 +15,23 @@ import 'package:venera_next/foundation/app_data_operations.dart';
 import 'package:venera_next/features/comic_source/comic_source_api.dart';
 import 'package:venera_next/foundation/comic_type.dart';
 import 'package:venera_next/features/favorites/favorites_manager.dart';
-import 'image_favorites_repository.dart';
 import 'package:venera_next/foundation/log.dart';
 import 'package:venera_next/foundation/sqlite_connection.dart';
-import 'package:venera_next/foundation/sqlite_transaction.dart';
-import 'package:venera_next/foundation/persistence_failure.dart';
 import 'package:venera_next/foundation/app.dart';
 import 'package:venera_next/foundation/throttled_task_runner.dart';
 
 typedef HistoryMetadataUpdater =
     Future<bool> Function({String? title, String? subtitle, String? cover});
 
-/// Persists one increment on its owned connection. Failures carry an explicit
-/// commit state; an unclassified failure is treated as an unknown outcome.
-typedef HistoryDurationStorageWriter =
+/// Persists one progress snapshot on its owned connection.
+///
+/// Injectable so tests can hold a write open and observe the queue's admission
+/// and replacement ordering deterministically.
+typedef HistoryStorageWriter =
     Future<void> Function(
       String databasePath,
       History snapshot,
-      int durationMs,
+      bool replaceMetadata,
     );
 
 class HistoryManager with ChangeNotifier {
@@ -40,33 +40,16 @@ class HistoryManager with ChangeNotifier {
   static HistoryManager? get cache => _cache;
 
   HistoryManager.create({
-    HistoryDurationStorageWriter? writeDuration,
     AppDataOperations? operations,
-  }) : _writeDuration = writeDuration ?? _addReadDurationAsync,
-       _operations = operations ?? AppDataOperations.instance;
+    HistoryStorageWriter? writeHistory,
+  }) : _operations = operations ?? AppDataOperations.instance,
+       _writeHistoryAsync = writeHistory ?? _addHistoryAsync;
 
-  final HistoryDurationStorageWriter _writeDuration;
   final AppDataOperations _operations;
+  final HistoryStorageWriter _writeHistoryAsync;
 
   @override
   void notifyListeners() => _operations.publish(super.notifyListeners);
-
-  /// Image favorites share this database lifetime and ordered access queue.
-  /// The callback may own a background reader, and must await its actual close.
-  Future<T> accessImageFavorites<T>(
-    FutureOr<T> Function(ImageFavoritesRepository repository, String path)
-    action,
-  ) => _enqueueAsyncWrite(() {
-    if (!isInitialized) throw StateError('History database is closed');
-    final path = _dbPath;
-    final generation = _generation;
-    return () async {
-      if (!isInitialized || generation != _generation) {
-        throw StateError('Image favorites belong to a closed connection');
-      }
-      return action(ImageFavoritesRepository(_db), path);
-    };
-  });
 
   /// Notifications from either table must not lend data access to listeners.
   void publishChange(void Function() notify) => _operations.publish(notify);
@@ -77,7 +60,9 @@ class HistoryManager with ChangeNotifier {
   Database get _db =>
       _database ?? (throw StateError('History database is closed'));
 
-  Database get imageFavoritesDatabase => _db;
+  /// The live connection, for tests that need raw SQL against this database.
+  @visibleForTesting
+  Database get historyDatabase => _db;
 
   late String _dbPath;
 
@@ -86,7 +71,9 @@ class HistoryManager with ChangeNotifier {
   int get length => _repository.count();
 
   late final _historyCache = HistoryCache(
-    identities: ({String? id}) => _repository.identities(id: id),
+    // The cache gates reads on identity. A cleared comic keeps its durable
+    // position, so its identity must stay known or "continue" would forget it.
+    identities: ({String? id}) => _repository.knownIdentities(id: id),
     load: (id, type) => _repository.find(id, type),
   );
 
@@ -139,7 +126,6 @@ class HistoryManager with ChangeNotifier {
       database = openSqliteDatabase(_dbPath);
       _database = database;
       HistoryRepository(database).initialize();
-      ImageFavoritesRepository(database).initialize();
       // Retention uses the ordered mutation queue. Even when disabled, drain
       // previously accepted writes before declaring this connection ready.
       await clearExpiredHistory(
@@ -149,6 +135,8 @@ class HistoryManager with ChangeNotifier {
       );
       _checkInitialization(generation);
       if (hasPendingWrites) await waitForAsyncWrites();
+      _checkInitialization(generation);
+      _refreshReadCache();
       _checkInitialization(generation);
       isInitialized = true;
       notifyListeners();
@@ -183,68 +171,6 @@ class HistoryManager with ChangeNotifier {
         db.dispose();
       }
     });
-  }
-
-  static Future<void> _addReadDurationAsync(
-    String dbPath,
-    History item,
-    int durationMs,
-  ) async {
-    try {
-      await Isolate.run(() {
-        Database? db;
-        PersistenceFailure? failure;
-        var committed = false;
-        try {
-          db = openSqliteDatabase(dbPath);
-          // This repository call owns a complete transaction on this fresh
-          // connection. A rollback failure leaves its commit state uncertain.
-          HistoryRepository(db).addReadDuration(item, durationMs);
-          committed = true;
-        } catch (error, stack) {
-          failure = PersistenceFailure(
-            commitState: error is SqliteTransactionRollbackError
-                ? PersistenceCommitState.unknown
-                : PersistenceCommitState.notCommitted,
-            cause: error,
-            stackTrace: stack,
-          );
-        } finally {
-          try {
-            db?.dispose();
-          } catch (error, stack) {
-            final original = failure;
-            failure = PersistenceFailure(
-              commitState:
-                  original?.commitState ??
-                  (committed
-                      ? PersistenceCommitState.committed
-                      : PersistenceCommitState.notCommitted),
-              cause: original?.cause ?? error,
-              stackTrace: original?.stackTrace ?? stack,
-              cleanupFailures: original == null
-                  ? const []
-                  : [
-                      ...original.cleanupFailures,
-                      (error: error, stackTrace: stack),
-                    ],
-            );
-          }
-        }
-        if (failure != null) {
-          Error.throwWithStackTrace(failure, failure.stackTrace);
-        }
-      });
-    } on PersistenceFailure {
-      rethrow;
-    } catch (error, stack) {
-      // Losing the worker/result channel does not prove that SQL rolled back.
-      throw PersistenceFailure(
-        commitState: PersistenceCommitState.unknown,
-        cause: error,
-        stackTrace: stack,
-      );
-    }
   }
 
   Future<void> _asyncHistoryQueue = Future.value();
@@ -291,8 +217,12 @@ class HistoryManager with ChangeNotifier {
       final path = _dbPath;
       final generation = _generation;
       return () async {
-        await _addHistoryAsync(path, snapshot, replaceMetadata);
+        await _writeHistoryAsync(path, snapshot, replaceMetadata);
         if (isInitialized && generation == _generation) {
+          // The write ran on its own connection, so the shared read-mark cache
+          // is reloaded rather than patched from the snapshot: an import may
+          // have replaced the stored set wholesale.
+          _refreshReadCache();
           _cachePersistedHistory(snapshot.id, snapshot.type.value);
           notifyListeners();
         }
@@ -334,68 +264,6 @@ class HistoryManager with ChangeNotifier {
       _cacheHistory(stored);
     }
   }
-
-  /// Atomically adds foreground reading time without replacing progress data.
-  Future<void> addReadDuration(History item, Duration duration) {
-    final durationMs = duration.inMilliseconds;
-    if (durationMs <= 0) return Future.value();
-    final snapshot = item.copy();
-    return _enqueueAsyncWrite(() {
-      if (!isInitialized) {
-        throw PersistenceFailure(
-          commitState: PersistenceCommitState.notCommitted,
-          cause: StateError('History database is closed'),
-          stackTrace: StackTrace.current,
-        );
-      }
-      final path = _dbPath;
-      final generation = _generation;
-      return () async {
-        PersistenceFailure? committedFailure;
-        try {
-          await _writeDuration(path, snapshot, durationMs);
-        } on PersistenceFailure catch (error) {
-          if (error.commitState != PersistenceCommitState.committed) rethrow;
-          committedFailure = error;
-        } catch (error, stack) {
-          throw PersistenceFailure(
-            commitState: PersistenceCommitState.unknown,
-            cause: error,
-            stackTrace: stack,
-          );
-        }
-        try {
-          if (item.id == snapshot.id && item.type == snapshot.type) {
-            item.readDurationMs += durationMs;
-          }
-          if (isInitialized && generation == _generation) {
-            _cachePersistedHistory(snapshot.id, snapshot.type.value);
-            notifyListeners();
-          }
-        } catch (error, stack) {
-          final original = committedFailure;
-          throw PersistenceFailure(
-            commitState: PersistenceCommitState.committed,
-            cause: original?.cause ?? error,
-            stackTrace: original?.stackTrace ?? stack,
-            cleanupFailures: original == null
-                ? const []
-                : [
-                    ...original.cleanupFailures,
-                    (error: error, stackTrace: stack),
-                  ],
-          );
-        }
-        if (committedFailure != null) {
-          Error.throwWithStackTrace(
-            committedFailure,
-            committedFailure.stackTrace,
-          );
-        }
-      };
-    });
-  }
-
   Future<void> waitForAsyncWrites() => _operations.access(_waitForLocalWrites);
 
   Future<void> _waitForLocalWrites() async {
@@ -474,7 +342,10 @@ class HistoryManager with ChangeNotifier {
     }
   });
 
-  Future<void> _delete(void Function(HistoryRepository) mutate) {
+  Future<void> _delete(
+    void Function(HistoryRepository) mutate, {
+    void Function()? afterCommit,
+  }) {
     return _enqueueAsyncWrite(() {
       if (_database == null) throw StateError('History database is closed');
       final path = _dbPath;
@@ -483,6 +354,7 @@ class HistoryManager with ChangeNotifier {
         await _mutateDatabase(path, mutate);
         if (isInitialized && generation == _generation) {
           updateCache();
+          afterCommit?.call();
           notifyListeners();
         }
       };
@@ -490,6 +362,20 @@ class HistoryManager with ChangeNotifier {
   }
 
   Future<void> clearHistory() => _delete((repository) => repository.clear());
+  /// Moves one history entry to a new source identity.
+  ///
+  /// Reading progress and metadata survive the move; only the identity columns
+  /// change. Used when a comic is switched to another source.
+  Future<void> switchSource(
+    String oldId,
+    int oldType,
+    String newId,
+    int newType,
+  ) => _delete(
+    (repository) =>
+        repository.switchSource(oldId, oldType, newId, newType),
+  );
+
 
   HistoryRetentionChange createRetentionChange(int days) {
     final generation = _generation;
@@ -545,18 +431,83 @@ class HistoryManager with ChangeNotifier {
   History? find(String id, ComicType type) =>
       _historyCache.find(id, type.value);
 
+  /// Read marks for one comic, regardless of whether a history row exists.
+  ///
+  /// Pages ask here instead of reading [History.readEpisode] so clearing the
+  /// history no longer erases which chapters were finished.
+  ReadChapters readMarks(String id, ComicType type) {
+    try {
+      final cached = _readCache[id]?[type.value];
+      if (cached != null) return ReadChapters(cached);
+      return ReadChapters(_repository.readChapters(id, type.value));
+    } catch (_) {
+      // A closed connection must not turn every chapter into "unread".
+      return ReadChapters.empty();
+    }
+  }
+
+  /// The stored mark set, for callers that only need the chapter keys.
+  Set<String> readChapters(String id, ComicType type) =>
+      readMarks(id, type).readEpisode;
+
+  /// Durable marks loaded at initialization, keyed by identity.
+  final _readCache = <String, Map<int, Set<String>>>{};
+
+  void _refreshReadCache() {
+    _readCache.clear();
+    for (final entry in _repository.allReadChapters().entries) {
+      (_readCache[entry.key.$1] ??= {})[entry.key.$2] = entry.value;
+    }
+  }
+
+  /// Marks or unmarks chapters and keeps both stores in step.
+  ///
+  /// This is the only path that may remove a mark, since progress writes union.
+  ///
+  /// The mutation is built by a STATIC helper over plain values. A lambda
+  /// written inside an instance method implicitly captures `this`, and this
+  /// manager owns Futures that cannot cross an isolate boundary, so
+  /// `Isolate.run` would reject it and the write would never reach disk.
+  Future<void> setChaptersRead(
+    String id,
+    ComicType type,
+    Set<String> chapters, {
+    required bool read,
+  }) {
+    final mutation = _chapterMarkMutation(id, type.value, chapters, read);
+    return _delete(mutation, afterCommit: _refreshReadCache);
+  }
+
+  /// Builds a send-safe mutation closure. Kept static so the closure captures
+  /// only the plain arguments below.
+  static void Function(HistoryRepository) _chapterMarkMutation(
+    String id,
+    int type,
+    Set<String> chapters,
+    bool read,
+  ) {
+    final keys = Set<String>.of(chapters);
+    return (repository) {
+      final next = repository.readChapters(id, type);
+      if (read) {
+        next.addAll(keys);
+      } else {
+        next.removeAll(keys);
+      }
+      repository.writeReadChapters(id, type, next);
+    };
+  }
+
   List<History> getAll() => _repository.getAll();
   List<History> getRecent() => _repository.getRecent();
   int count() => _repository.count();
-  int getTotalReadDurationMs() => _repository.getTotalReadDurationMs();
-  int countWithReadDuration() => _repository.countWithReadDuration();
-  List<History> getAllByReadDuration() => _repository.getAllByReadDuration();
 
   void close() {
     ++_generation;
     isInitialized = false;
     _initialization = null;
     _historyCache.clear();
+    _readCache.clear();
     final database = _database;
     _database = null;
     database?.dispose();

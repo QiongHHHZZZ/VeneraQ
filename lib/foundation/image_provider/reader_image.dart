@@ -1,15 +1,11 @@
 import 'package:venera_next/foundation/operation_failure.dart';
-import 'package:venera_next/foundation/global_preference_store.dart';
-import 'package:venera_next/foundation/application_preferences.dart';
 import 'dart:async' show Future;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:venera_next/foundation/file_system.dart';
-import 'reader_image_processing.dart';
 import 'package:venera_next/network/images.dart';
 import 'package:venera_next/network/image_stream.dart';
 import 'base_image_provider.dart';
-import 'package:venera_next/foundation/appdata.dart';
 
 class ReaderImageProvider extends BaseImageProvider<ReaderImageProvider> {
   /// Image provider for normal image.
@@ -77,26 +73,6 @@ class ReaderImageProvider extends BaseImageProvider<ReaderImageProvider> {
       throw OperationFailure.message("Error: Empty response body.");
     }
     checkStop();
-    if (GlobalPreferenceStore(
-      appdata.settings,
-    ).read(ImageProcessingPreferences.enabled)) {
-      var script = GlobalPreferenceStore(
-        appdata.settings,
-      ).read(ImageProcessingPreferences.script);
-      if (!script.contains('function processImage')) {
-        return imageBytes;
-      }
-      imageBytes = await processReaderImageBytes(
-        imageBytes,
-        script: script,
-        comicId: cid,
-        episodeId: eid,
-        page: page,
-        sourceKey: sourceKey,
-        checkStop: checkStop,
-        cancelSignal: BaseImageProvider.cancelSignalOf(checkStop),
-      );
-    }
     return imageBytes;
   }
 

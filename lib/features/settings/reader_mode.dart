@@ -4,11 +4,8 @@ import 'package:venera_next/foundation/reader_preference_store.dart';
 import 'package:flutter/material.dart';
 import 'package:venera_next/features/reader/reader_mode_labels.dart';
 import 'package:venera_next/foundation/appdata.dart';
-import 'package:venera_next/foundation/comic_layout.dart';
 import 'package:venera_next/foundation/translations.dart';
 import 'package:venera_next/components/settings_save_state.dart';
-import 'package:venera_next/foundation/context.dart';
-import 'package:venera_next/foundation/log.dart';
 
 class ReaderModeSettings extends StatefulWidget {
   const ReaderModeSettings({
@@ -16,16 +13,12 @@ class ReaderModeSettings extends StatefulWidget {
     this.comicId,
     this.sourceKey,
     this.currentMode,
-    this.isDetecting,
-    this.onDetect,
     this.onChanged,
   });
 
   final String? comicId;
   final String? sourceKey;
   final String Function()? currentMode;
-  final bool Function()? isDetecting;
-  final Future<void> Function()? onDetect;
   final VoidCallback? onChanged;
 
   @override
@@ -33,8 +26,6 @@ class ReaderModeSettings extends StatefulWidget {
 }
 
 class _ReaderModeSettingsState extends SettingsSaveState<ReaderModeSettings> {
-  bool _detecting = false;
-
   @override
   void initState() {
     super.initState();
@@ -143,51 +134,24 @@ class _ReaderModeSettingsState extends SettingsSaveState<ReaderModeSettings> {
   @override
   Widget build(BuildContext context) {
     final settings = appdata.settings;
-    final auto = _store.read(ReaderPreferences.autoReaderMode) == true;
     final cid = widget.comicId;
     final source = widget.sourceKey;
     if (cid == null || source == null) {
       return Column(
         children: [
           settingsSaveStatus,
-          SwitchListTile(
-            title: Text('Choose reading mode automatically'.tl),
-            subtitle: Text(
-              'Recognize paged and long-strip comics from image proportions.'
-                  .tl,
-            ),
-            value: auto,
-            onChanged: (value) =>
-                _setPreference(ReaderPreferences.autoReaderMode, value),
-          ),
-          if (auto) ...[
-            _preference('Paged comics', ReaderPreferences.pagedReaderMode),
-            _preference(
-              'Long-strip comics',
-              ReaderPreferences.longStripReaderMode,
-            ),
-          ],
-          _preference(
-            auto ? 'When layout is unknown' : 'Default reading mode',
-            ReaderPreferences.readerMode,
-            description: auto
-                ? 'Used when there are too few images or their proportions are mixed.'
-                : null,
-          ),
+          _preference('Default reading mode', ReaderPreferences.readerMode),
         ],
       );
     }
 
     final override = settings.comicReaderModeOverride(cid, source);
+    // A mode removed in a later version must not surface as a raw stored key.
+    final displayOverride = override == null
+        ? null
+        : ReaderPreferences.readerMode.normalize(override);
     final effective = settings.resolveReaderMode(cid, source);
     final current = widget.currentMode?.call() ?? effective;
-    final layout = settings.comicLayout(cid, source);
-    final detecting = _detecting || (widget.isDetecting?.call() ?? false);
-    final layoutLabel = switch (layout) {
-      ComicLayout.paged => 'Paged comic'.tl,
-      ComicLayout.longStrip => 'Long-strip comic'.tl,
-      ComicLayout.unknown => 'Not identified'.tl,
-    };
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -196,9 +160,9 @@ class _ReaderModeSettingsState extends SettingsSaveState<ReaderModeSettings> {
           title: Text('Reading mode for this comic'.tl),
           subtitle: Text(
             [
-              override == null
+              displayOverride == null
                   ? 'Follow default'.tl
-                  : readerModeLabels[override] ?? override,
+                  : readerModeLabels[displayOverride] ?? displayOverride,
               'Currently using: @mode'.tlParams({
                 'mode': readerModeLabels[current] ?? current,
               }),
@@ -207,7 +171,7 @@ class _ReaderModeSettingsState extends SettingsSaveState<ReaderModeSettings> {
           trailing: const Icon(Icons.expand_more),
           onTap: () => _chooseMode(
             title: 'Reading mode for this comic'.tl,
-            value: override ?? 'default',
+            value: displayOverride ?? 'default',
             allowDefault: true,
             onSelected: (value) => saveSetting(
               (cid, source, 'readerMode'),
@@ -224,51 +188,6 @@ class _ReaderModeSettingsState extends SettingsSaveState<ReaderModeSettings> {
             ),
           ),
         ),
-        if (auto) ...[
-          ListTile(
-            leading: Icon(switch (layout) {
-              ComicLayout.paged => Icons.auto_stories_outlined,
-              ComicLayout.longStrip => Icons.view_day_outlined,
-              ComicLayout.unknown => Icons.aspect_ratio,
-            }),
-            title: Text(
-              detecting ? 'Identifying comic layout…'.tl : layoutLabel,
-            ),
-            subtitle: Text(
-              (override != null
-                      ? 'Your choice for this comic takes priority.'
-                      : layout == ComicLayout.unknown
-                      ? 'Not enough consistent image proportions to identify the layout.'
-                      : 'Recognized from image proportions. Your reading preference applies automatically.')
-                  .tl,
-            ),
-          ),
-          if (widget.onDetect != null)
-            Align(
-              alignment: AlignmentDirectional.centerStart,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: TextButton(
-                  onPressed: detecting
-                      ? null
-                      : () async {
-                          setState(() => _detecting = true);
-                          try {
-                            await widget.onDetect!();
-                          } catch (error, stack) {
-                            Log.error('Layout detection', error, stack);
-                            if (context.mounted) {
-                              context.showMessage(message: error.toString());
-                            }
-                          } finally {
-                            if (mounted) setState(() => _detecting = false);
-                          }
-                        },
-                  child: Text('Identify again from this chapter'.tl),
-                ),
-              ),
-            ),
-        ],
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
           child: Text(

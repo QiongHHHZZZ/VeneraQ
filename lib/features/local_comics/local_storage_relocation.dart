@@ -6,8 +6,8 @@ import 'package:venera_next/foundation/comic_type.dart';
 import 'package:venera_next/foundation/file_system.dart';
 import 'package:venera_next/foundation/sqlite_transaction.dart';
 
-import 'import_export/comic_copy_metadata.dart';
-import 'import_export/comic_copy_record.dart';
+import 'comic_copy_metadata.dart';
+import 'comic_copy_record.dart';
 import 'local_comic_model.dart';
 import 'local_repository.dart';
 
@@ -128,7 +128,7 @@ class LocalStorageRelocation {
       final record = ComicCopyRecord.readForCleanup(Directory(target));
       final oldRegistration = comicCopyRegistration(original);
       if (!record.hasRegistration(oldRegistration)) continue;
-      final intended = decodeComicCopyMetadata(record.metadata!, target).comic;
+      final intended = decodeComicCopyMetadata(record.metadata!, target);
       if (!matchesComicCopyMetadata(intended, original)) {
         throw StateError('Copy receipt metadata changed before relocation');
       }

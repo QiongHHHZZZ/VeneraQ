@@ -1,8 +1,7 @@
 import 'package:venera_next/foundation/preferences.dart';
 import 'reader_preference_settings.dart';
-import 'reader_preferences.dart';
 
-enum ReaderPreferenceScope { active, global, device, comic }
+enum ReaderPreferenceScope { active, global, comic }
 
 /// Typed edits over the existing persistence format. Resolving an active scope
 /// happens on each operation so toggling a scope cannot leave a stale binding.
@@ -37,17 +36,13 @@ class ReaderPreferenceStore {
         (scope == ReaderPreferenceScope.active && comicId != null)) {
       return settings.getReaderSetting(comicId!, sourceKey!, key);
     } else {
-      return settings.getDeviceReaderSetting(key);
+      return settings[key];
     }
   }
 
   void write<T>(Preference<T> preference, T value) {
     final normalized = preference.normalize(value);
     writeRaw(preference.key, normalized);
-    if (preference.key == ReaderPreferences.showChapterComments.key &&
-        normalized == false) {
-      write(ReaderPreferences.showChapterCommentsAtEnd, false);
-    }
   }
 
   /// The remaining heterogeneous fields keep their JSON representation and
@@ -60,8 +55,6 @@ class ReaderPreferenceStore {
     switch (scope) {
       case ReaderPreferenceScope.global:
         settings[key] = stored;
-      case ReaderPreferenceScope.device:
-        settings.setDeviceReaderSetting(key, stored);
       case ReaderPreferenceScope.comic:
         settings.setReaderSetting(comicId!, sourceKey!, key, stored);
       case ReaderPreferenceScope.active:

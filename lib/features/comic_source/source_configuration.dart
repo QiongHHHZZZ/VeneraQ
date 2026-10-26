@@ -78,10 +78,6 @@ class SourceConfigurationChange {
         for (final source in all)
           if (source.favoriteData != null) source.favoriteData!.key,
       ],
-      'searchSources': [
-        for (final source in all)
-          if (source.searchPageData != null) source.key,
-      ],
     };
   }
 

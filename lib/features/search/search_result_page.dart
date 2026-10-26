@@ -1,5 +1,3 @@
-import 'package:venera_next/foundation/application_preferences.dart';
-import 'package:venera_next/foundation/global_preference_store.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -8,16 +6,15 @@ import 'package:venera_next/components/message.dart';
 import 'package:venera_next/components/select.dart';
 import 'package:venera_next/features/comic_widgets/comic_widgets.dart';
 import 'package:venera_next/foundation/app_locale.dart';
-import 'package:venera_next/foundation/appdata.dart';
 import 'package:venera_next/foundation/context.dart';
 import 'package:venera_next/features/comic_source/comic_source.dart';
 import 'package:venera_next/foundation/global_state.dart';
+import 'package:venera_next/foundation/appdata.dart';
 import 'package:venera_next/foundation/log.dart';
 import 'package:venera_next/foundation/extensions.dart';
 import 'package:venera_next/foundation/translations.dart';
 import 'package:venera_next/foundation/widget_utils.dart';
 
-import 'search_filter.dart';
 import 'search_page.dart';
 
 class SearchResultPage extends StatefulWidget {
@@ -56,9 +53,8 @@ class _SearchResultPageState extends State<SearchResultPage> {
       if (suggestionsController.entry != null) {
         suggestionsController.remove();
       }
-      text = _applyConfiguredLanguageFilter(text);
       setState(() {
-        this.text = text!;
+        this.text = text;
       });
       unawaited(_recordSearchHistory(text));
       controller.currentText = text;
@@ -111,20 +107,10 @@ class _SearchResultPageState extends State<SearchResultPage> {
     super.dispose();
   }
 
-  String _applyConfiguredLanguageFilter(String text) {
-    return applySearchLanguageFilter(
-      text,
-      sourceKey: sourceKey,
-      setting: GlobalPreferenceStore(
-        appdata.settings,
-      ).read(DiscoveryPreferences.autoAddLanguageFilter),
-    );
-  }
 
   @override
   void initState() {
     sourceKey = widget.sourceKey;
-    text = _applyConfiguredLanguageFilter(widget.text);
     controller = SearchBarController(currentText: text, onSearch: search);
     options = widget.options ?? const [];
     validateOptions();
@@ -192,7 +178,6 @@ class _SearchResultPageState extends State<SearchResultPage> {
           );
           if (!previousOptions.isEqualTo(options) ||
               previousSourceKey != sourceKey) {
-            text = _applyConfiguredLanguageFilter(controller.text);
             controller.currentText = text;
             setState(() {});
           }
@@ -439,15 +424,11 @@ class _SearchSettingsDialogState extends State<_SearchSettingsDialog> {
 
   @override
   Widget build(BuildContext context) {
-    var sources = ComicSource.all();
-    var enabled =
-        GlobalPreferenceStore(
-          appdata.settings,
-        ).read(DiscoveryPreferences.searchSources) ??
-        const <String>[];
-    sources.removeWhere((e) {
-      return !enabled.contains(e.key);
-    });
+    // Only sources with a search page can be searched, and all of them are
+    // offered; the enabled-list setting is gone.
+    final sources = ComicSource.all()
+        .where((e) => e.searchPageData != null)
+        .toList();
     return ContentDialog(
       title: "Settings".tl,
       content: Column(

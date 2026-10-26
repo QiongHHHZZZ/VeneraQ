@@ -1,6 +1,4 @@
 import 'package:venera_next/features/favorites/favorites_scope.dart';
-import 'package:venera_next/foundation/global_preference_store.dart';
-import 'package:venera_next/foundation/application_preferences.dart';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -11,7 +9,6 @@ import 'package:venera_next/components/appbar.dart';
 import 'package:venera_next/features/comic_source/comic_source_api.dart';
 import 'package:venera_next/features/favorites/favorites.dart';
 import 'package:venera_next/foundation/res.dart';
-import 'package:venera_next/foundation/appdata.dart';
 import 'package:venera_next/foundation/comic_type.dart';
 import 'package:venera_next/foundation/context.dart';
 import 'package:venera_next/foundation/translations.dart';
@@ -27,6 +24,7 @@ class ComicFavoritePanel extends StatefulWidget {
     required this.onFavorite,
     required this.favoriteItem,
     this.updateTime,
+    this.chapterCount,
   });
 
   final String cid;
@@ -43,6 +41,10 @@ class ComicFavoritePanel extends StatefulWidget {
   final FavoriteItem favoriteItem;
 
   final String? updateTime;
+
+  /// Total chapters the detail page already loaded, stored at collection time so
+  /// the shelf badge is populated without waiting for an update check.
+  final int? chapterCount;
 
   @override
   State<ComicFavoritePanel> createState() => _FavoritePanelState();
@@ -78,6 +80,7 @@ class _FavoritePanelState extends State<ComicFavoritePanel>
         onFavorite: widget.onFavorite,
         favoriteItem: widget.favoriteItem,
         updateTime: widget.updateTime,
+        chapterCount: widget.chapterCount,
         comicSource: comicSource,
         hasNetwork: hasNetwork,
         localFolders: localFolders,
@@ -95,6 +98,7 @@ class _FavoriteList extends StatefulWidget {
     required this.onFavorite,
     required this.favoriteItem,
     this.updateTime,
+    this.chapterCount,
     required this.comicSource,
     required this.hasNetwork,
     required this.localFolders,
@@ -107,6 +111,7 @@ class _FavoriteList extends StatefulWidget {
   final void Function(bool?, bool?) onFavorite;
   final FavoriteItem favoriteItem;
   final String? updateTime;
+  final int? chapterCount;
   final ComicSource comicSource;
   final bool hasNetwork;
   final List<String> localFolders;
@@ -119,15 +124,12 @@ class _FavoriteList extends StatefulWidget {
 class _FavoriteListState extends State<_FavoriteList> {
   @override
   Widget build(BuildContext context) {
-    final localFavoritesFirst = GlobalPreferenceStore(
-      appdata.settings,
-    ).read(FavoritePreferences.localFavoritesFirst);
-
     final localSection = _LocalSection(
       cid: widget.cid,
       type: widget.type,
       favoriteItem: widget.favoriteItem,
       updateTime: widget.updateTime,
+      chapterCount: widget.chapterCount,
       localFolders: widget.localFolders,
       added: widget.added,
       onFavorite: (local) {
@@ -154,15 +156,11 @@ class _FavoriteListState extends State<_FavoriteList> {
           )
         : null;
 
+    // Local favorites always come first: they are the reader's own library.
     return ListView(
       children: [
-        if (localFavoritesFirst) ...[
-          localSection,
-          if (widget.hasNetwork) ...[divider!, networkSection!],
-        ] else ...[
-          if (widget.hasNetwork) ...[networkSection!, divider!],
-          localSection,
-        ],
+        localSection,
+        if (widget.hasNetwork) ...[divider!, networkSection!],
       ],
     );
   }
@@ -283,11 +281,6 @@ class _NetworkSectionState extends State<NetworkFavoriteSection> {
     context.showMessage(
       message: multi ? "Success".tl : (wasAdded ? "Removed".tl : "Added".tl),
     );
-    if (GlobalPreferenceStore(
-      appdata.settings,
-    ).read(FavoritePreferences.autoCloseFavoritePanel)) {
-      context.pop();
-    }
   }
 
   Widget _buildLoadingSkeleton() {
@@ -481,6 +474,7 @@ class _LocalSection extends StatefulWidget {
     required this.type,
     required this.favoriteItem,
     this.updateTime,
+    this.chapterCount,
     required this.localFolders,
     required this.added,
     required this.onFavorite,
@@ -490,6 +484,7 @@ class _LocalSection extends StatefulWidget {
   final ComicType type;
   final FavoriteItem favoriteItem;
   final String? updateTime;
+  final int? chapterCount;
   final List<String> localFolders;
   final List<String> added;
   final void Function(bool) onFavorite;
@@ -508,7 +503,6 @@ class _LocalSectionState extends State<_LocalSection> {
     final target = widget;
     bool sameTarget() => widget.cid == target.cid && widget.type == target.type;
     final owner = context;
-    final route = ModalRoute.of(owner);
     final manager = FavoritesScope.read(context);
     final generation = manager.connectionGeneration;
     setState(() => saving = true);
@@ -526,6 +520,7 @@ class _LocalSectionState extends State<_LocalSection> {
             target.favoriteItem,
             null,
             target.updateTime,
+            target.chapterCount,
           );
         }
       });
@@ -534,13 +529,6 @@ class _LocalSectionState extends State<_LocalSection> {
         localAdded = manager.find(target.cid, target.type).toSet();
       });
       target.onFavorite(localAdded.isNotEmpty);
-      if (owner.mounted &&
-          route?.isCurrent != false &&
-          (GlobalPreferenceStore(
-            appdata.settings,
-          ).read(FavoritePreferences.autoCloseFavoritePanel))) {
-        owner.pop();
-      }
     } catch (error, stack) {
       Log.error('Local favorite', error, stack);
       if (owner.mounted && sameTarget()) {
@@ -602,31 +590,6 @@ class _LocalSectionState extends State<_LocalSection> {
             ),
           );
         }),
-        // New folder button
-        ListTile(
-          title: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.add, size: 20),
-              const SizedBox(width: 4),
-              Text("New Folder".tl),
-            ],
-          ),
-          onTap: () {
-            final target = widget;
-            newFolder(
-              context,
-              onChanged: (folders) {
-                if (!mounted ||
-                    widget.cid != target.cid ||
-                    widget.type != target.type) {
-                  return;
-                }
-                setState(() => localFolders = folders);
-              },
-            );
-          },
-        ),
       ],
     );
   }

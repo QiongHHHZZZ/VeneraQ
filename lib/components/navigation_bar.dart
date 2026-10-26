@@ -4,6 +4,8 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:venera_next/foundation/app.dart';
+import 'package:venera_next/foundation/selection_mode.dart';
+import 'package:venera_next/foundation/back_interceptor.dart';
 import 'package:venera_next/routing/app_navigation.dart';
 import 'package:venera_next/foundation/app_page_route.dart';
 import 'package:venera_next/foundation/consts.dart';
@@ -47,6 +49,8 @@ class NaviPane extends StatefulWidget {
     required this.paneItems,
     required this.paneActions,
     required this.pageBuilder,
+    this.paneLeading,
+    this.paneTitle,
     this.initialPage = 0,
     this.onPageChanged,
     required this.observer,
@@ -57,6 +61,21 @@ class NaviPane extends StatefulWidget {
   final List<PaneItemEntry> paneItems;
 
   final List<PaneActionEntry> paneActions;
+
+  /// Optional control rendered before the title of the narrow top bar.
+  ///
+  /// A pane that provides none — every destination without a leading action —
+  /// renders exactly as before, with the title kept off the left edge by the
+  /// bar's own padding. The wide layouts drop the top bar entirely, so this
+  /// slot has no side-bar counterpart.
+  final Widget? paneLeading;
+
+  /// Replaces the destination label with a page-supplied control.
+  ///
+  /// A destination whose own primary control is a picker — discovery chooses a
+  /// source before showing anything — reads better with that picker in the bar
+  /// than as a second row under it. The wide layouts keep the plain label.
+  final Widget? paneTitle;
 
   final Widget Function(int page) pageBuilder;
 
@@ -80,8 +99,6 @@ typedef NaviItemTapListener = void Function(int);
 
 class NaviPaneState extends State<NaviPane>
     with SingleTickerProviderStateMixin {
-  bool _canPop = true;
-
   late int _currentPage = widget.initialPage;
 
   int get currentPage => _currentPage;
@@ -253,32 +270,62 @@ class NaviPaneState extends State<NaviPane>
     return HeroControllerScope(
       controller: MaterialApp.createMaterialHeroController(),
       child: PopScope(
-        canPop: _canPop,
+        // Claim back here and forward it, instead of letting the shell route
+        // answer the gesture itself.
+        //
+        // This scope sits above every pushed page. When it reported canPop:
+        // true the gesture was resolved at this level, so a page never got to
+        // refuse it: a chapter selection could not swallow back, and the whole
+        // comic closed instead of just leaving selection mode. Forwarding to the
+        // navigator first lets each page's own PopScope decide, and only an
+        // empty navigator leaves the app.
+        canPop: false,
         onPopInvokedWithResult: (didPop, result) {
           if (didPop) {
             return;
           }
-          widget.navigatorKey.currentState?.maybePop(result);
+          // A page that must not be left — an active chapter selection, for
+          // instance — consumes the gesture here, before the navigator is asked
+          // to pop. Otherwise the pop would be decided at the navigator, where a
+          // page has no reliable way to refuse it.
+          if (BackInterceptor.handle()) {
+            return;
+          }
+          // A page's selection mode is the same kind of claim: while it is on,
+          // back leaves the mode rather than the page. It cannot refuse from
+          // inside the navigator, so it publishes the flag instead.
+          if (SelectionModeNotifier.instance.leaveSelection()) {
+            return;
+          }
+          final navigator = widget.navigatorKey.currentState;
+          if (navigator != null && navigator.canPop()) {
+            navigator.maybePop(result);
+            return;
+          }
+          // Overlays pushed on the root navigator — the long-press menu, for
+          // instance — are not part of this inner navigator, so canPop() cannot
+          // see them. Asking the root navigator first lets such an overlay close
+          // instead of the gesture falling through to SystemNavigator.pop and
+          // quitting the app.
+          final root = Navigator.of(
+            context,
+            rootNavigator: true,
+          );
+          if (root.canPop()) {
+            root.maybePop(result);
+            return;
+          }
+          // Nothing left to pop: back leaves the app, as before.
+          SystemNavigator.pop();
         },
-        child: NotificationListener<NavigationNotification>(
-          onNotification: (NavigationNotification notification) {
-            final bool nextCanPop = !notification.canHandlePop;
-            if (nextCanPop != _canPop) {
-              setState(() {
-                _canPop = nextCanPop;
-              });
-            }
-            return false;
-          },
-          child: Navigator(
-            observers: [widget.observer],
-            key: widget.navigatorKey,
-            onGenerateRoute: (settings) => AppPageRoute(
-              preventRebuild: false,
-              builder: (context) {
-                return _NaviMainView(state: this);
-              },
-            ),
+        child: Navigator(
+          observers: [widget.observer],
+          key: widget.navigatorKey,
+          onGenerateRoute: (settings) => AppPageRoute(
+            preventRebuild: false,
+            builder: (context) {
+              return _NaviMainView(state: this);
+            },
           ),
         ),
       ),
@@ -290,26 +337,67 @@ class NaviPaneState extends State<NaviPane>
   }
 
   Widget buildTop() {
+    final leading = widget.paneLeading;
+    final custom = widget.paneTitle;
+    final title = Text(
+      widget.paneItems[currentPage].label,
+      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+    );
     return Material(
       child: Container(
-        padding: const EdgeInsets.only(left: 16, right: 16),
+        // A leading control occupies the row itself, so the bar only has to
+        // keep the title off the edge when nothing precedes it.
+        padding: EdgeInsets.only(left: leading == null ? 16 : 4, right: 4),
         height: _kTopBarHeight,
         width: double.infinity,
         child: Row(
           children: [
-            Text(
-              widget.paneItems[currentPage].label,
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            const Spacer(),
-            for (var action in widget.paneActions)
-              Tooltip(
-                message: action.label,
-                child: IconButton(
-                  icon: Icon(action.icon),
-                  onPressed: action.onTap,
+            ?leading,
+            if (custom == null)
+              // A tight constraint makes the title consume the free space, so
+              // the actions sit flush against the right edge. A loose Flexible
+              // would keep its intrinsic width and leave the gap before the
+              // actions.
+              Expanded(child: title)
+            else ...[
+              // Three equal columns put the page's control in the middle of the
+              // bar itself. Centring it in whatever space the title left over
+              // pushed it right, because the title is narrower than the icons.
+              Expanded(child: Align(alignment: Alignment.centerLeft, child: title)),
+              Expanded(child: Center(child: custom)),
+              Expanded(
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      for (var action in widget.paneActions)
+                        Tooltip(
+                          message: action.label,
+                          child: IconButton(
+                            icon: Icon(action.icon),
+                            onPressed: action.onTap,
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
               ),
+            ],
+            // The actions are rendered once, here. When the page supplies its own
+            // control they were also rendered inside the three-column block
+            // above, which drew every icon twice.
+            if (custom == null)
+              for (var action in widget.paneActions)
+                Tooltip(
+                  message: action.label,
+                  child: IconButton(
+                    icon: Icon(action.icon),
+                    onPressed: action.onTap,
+                  ),
+                ),
           ],
         ),
       ),

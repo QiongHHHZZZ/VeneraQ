@@ -19,13 +19,33 @@ class SourceRepository {
     required this.id,
     required this.name,
     required this.url,
+    this.enabled = true,
   });
 
   final String id;
   final String name;
   final String url;
 
-  Map<String, String> toJson() => {'id': id, 'name': name, 'url': url};
+  /// Whether this repository takes part in update checks.
+  ///
+  /// Disabling keeps the entry and its linked sources; it only stops the
+  /// repository from being consulted when looking for updates.
+  final bool enabled;
+
+  SourceRepository copyWith({String? name, String? url, bool? enabled}) =>
+      SourceRepository(
+        id: id,
+        name: name ?? this.name,
+        url: url ?? this.url,
+        enabled: enabled ?? this.enabled,
+      );
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    'url': url,
+    'enabled': enabled,
+  };
 }
 
 class SourceCatalogEntry {
@@ -47,12 +67,23 @@ class SourceCatalogEntry {
 /// A loaded catalog. Invalid entries are skipped and reported instead of
 /// making the whole repository unusable.
 class SourceCatalog {
-  const SourceCatalog(this.entries, this.skipped);
+  const SourceCatalog(
+    this.entries,
+    this.skipped, {
+    this.unsupported = const [],
+  });
 
   final List<SourceCatalogEntry> entries;
 
   /// Labels of the entries that were skipped, in catalog order.
   final List<String> skipped;
+
+  /// Entries the catalog offers that this app deliberately does not install.
+  ///
+  /// Separate from [skipped] because they are not broken: a video source is well
+  /// formed, it simply needs a player this app does not have. Reporting it as an
+  /// error would blame the repository for a limitation on our side.
+  final List<String> unsupported;
 }
 
 class SourceOrigin {
@@ -100,6 +131,24 @@ class SourceRepositories extends ChangeNotifier {
   static final instance = SourceRepositories();
   int revision = 0;
 
+  /// Repositories offered to every installation once. The second entry is a
+  /// community source list recommended by this fork. Users can remove either
+  /// entry; the one-time flag prevents restoring it on a later launch.
+  static const List<SourceRepository> defaultRepositories = [
+    SourceRepository(
+      id: 'venera-configs',
+      name: 'Venera 源仓库',
+      url:
+          'https://cdn.jsdelivr.net/gh/venera-app/venera-configs@main/index.json',
+    ),
+    SourceRepository(
+      id: 'handahao-venera-sources',
+      name: 'handahao 源仓库',
+      url:
+          'https://cdn.jsdelivr.net/gh/handahao666-boop/venera_comic_source@main/index.json',
+    ),
+  ];
+
   @override
   void notifyListeners() {
     revision++;
@@ -107,6 +156,23 @@ class SourceRepositories extends ChangeNotifier {
   }
 
   List<SourceRepository> get all => _repositories(appdata.settings);
+
+  /// Turns one repository's participation in update checks on or off.
+  Future<void> setEnabled(String id, bool enabled) {
+    final records = appdata.settings['comicSourceRepositories'];
+    if (records is! List) return Future.value();
+    final updated = [
+      for (final record in records.whereType<Map>())
+        if (record['id'] == id) {...record, 'enabled': enabled} else record,
+    ];
+    return appdata.updateSettings((draft) {
+      draft['comicSourceRepositories'] = updated;
+    });
+  }
+
+  /// Repositories that should be consulted for updates.
+  List<SourceRepository> get enabled =>
+      all.where((repository) => repository.enabled).toList();
 
   List<SourceRepository> _repositories(Settings settings) {
     final records = settings['comicSourceRepositories'];
@@ -124,6 +190,9 @@ class SourceRepositories extends ChangeNotifier {
             id: record['id'],
             name: record['name'],
             url: record['url'],
+            // Absent means enabled: repositories saved before this flag existed
+            // must keep taking part in update checks.
+            enabled: record['enabled'] != false,
           ),
         )
         .toList();
@@ -203,6 +272,35 @@ class SourceRepositories extends ChangeNotifier {
     }
   }
 
+  /// Adds [defaultRepositories] once, preserving repositories the user already
+  /// has. The flag is set even when nothing is added, so removing a default
+  /// repository is not undone on the next launch.
+  Future<void> seedDefaults() async {
+    await appdata.ensureInit();
+    await AppDataOperations.instance.access(() async {
+      await appdata.updateSettings((draft) {
+        if (draft['comicSourceDefaultRepositoriesSeeded'] == true) return;
+        final repositories = _repositories(draft);
+        final ids = repositories.map((repository) => repository.id).toSet();
+        final urls = repositories.map((repository) => repository.url).toSet();
+        final additions = defaultRepositories
+            .where(
+              (repository) =>
+                  !ids.contains(repository.id) &&
+                  !urls.contains(repository.url),
+            )
+            .toList();
+        if (additions.isNotEmpty) {
+          draft['comicSourceRepositories'] = [
+            ...repositories.map((repository) => repository.toJson()),
+            ...additions.map((repository) => repository.toJson()),
+          ];
+        }
+        draft['comicSourceDefaultRepositoriesSeeded'] = true;
+      }, sync: false);
+    });
+  }
+
   Future<T> _edit<T>(T Function(Settings) change) async {
     var edited = false;
     try {
@@ -264,6 +362,7 @@ class SourceRepositories extends ChangeNotifier {
     }
     final entries = <SourceCatalogEntry>[];
     final skipped = <String>[];
+    final unsupported = <String>[];
     for (var index = 0; index < json.length; index++) {
       final record = json[index];
       final key = record is Map ? record['key'] : null;
@@ -279,6 +378,18 @@ class SourceRepositories extends ChangeNotifier {
             r'^\d+\.\d+\.\d+(?:[.\-].+)?$',
           ).hasMatch(record['version'] as String)) {
         skipped.add(label);
+        continue;
+      }
+      // A catalog can carry entries this app cannot run.
+      //
+      // `type: "video"` comes from a fork that taught Venera to play HLS; the
+      // entry's script returns m3u8 addresses, which this reader would try to
+      // decode as images. Offering it would install a source that opens blank
+      // and never plays, so it is skipped at the catalog instead of surfacing
+      // one layer down.
+      final kind = record['type'];
+      if (kind is String && kind.toLowerCase() == 'video') {
+        unsupported.add(label);
         continue;
       }
       final target =
@@ -310,7 +421,7 @@ class SourceRepositories extends ChangeNotifier {
     if (entries.isEmpty && skipped.isNotEmpty) {
       throw const SourceFailure(SourceFailureCode.emptyCatalog);
     }
-    return SourceCatalog(entries, skipped);
+    return SourceCatalog(entries, skipped, unsupported: unsupported);
   }
 
   SourceRepositorySave prepareSave({
@@ -448,7 +559,8 @@ class SourceRepositories extends ChangeNotifier {
     Dio? client,
     CancelToken? cancelToken,
   }) async {
-    final repositories = all;
+    // Disabled repositories are kept configured but not consulted.
+    final repositories = enabled;
     final updates = <String, String>{};
     final failures = <SourceCheckFailure>[];
     var checked = 0;

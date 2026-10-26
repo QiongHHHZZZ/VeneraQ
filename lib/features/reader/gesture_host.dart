@@ -27,9 +27,6 @@ class ReaderGestureHost extends StatelessWidget {
       openSettings: () {
         if (shell.mounted) shell.openSetting();
       },
-      openChapters: () {
-        if (shell.mounted) shell.openChapterDrawer();
-      },
       child: child,
     );
   }

@@ -2,9 +2,6 @@ import 'dart:io';
 import 'package:sqlite3/sqlite3.dart';
 import 'package:venera_next/features/favorites/favorites_repository.dart';
 import 'package:venera_next/features/history/history_repository.dart';
-import 'package:venera_next/features/history/history_api.dart';
-import 'package:venera_next/features/history/image_favorites_repository.dart';
-import 'package:venera_next/foundation/extensions.dart';
 import 'package:venera_next/foundation/sqlite_transaction.dart';
 import 'legacy_pica_data.dart';
 
@@ -17,9 +14,7 @@ void commitLegacyPicaData(
   required bool appendFavorites,
   required String Function(List<String>) translateTags,
   required void Function(Object, StackTrace) invalidLink,
-  DateTime Function()? clock,
 }) {
-  final now = clock ?? DateTime.now;
   if (!File(historyPath).existsSync()) {
     throw StateError('History import target does not exist');
   }
@@ -40,7 +35,9 @@ void commitLegacyPicaData(
     }
     final favorites = FavoritesRepository(db);
     final history = HistoryRepository(db, schema: 'imported_history');
-    final images = ImageFavoritesRepository(db, schema: 'imported_history');
+    // An older history.db has no read-mark table yet; create and backfill it
+    // before importing so the marks land in both stores.
+    history.initialize();
     runSqliteTransaction(db, () {
       for (final link in data.links) {
         if (favorites.findLinked(link.folder).$1 != null) continue;
@@ -70,73 +67,6 @@ void commitLegacyPicaData(
       }
       for (final item in data.history) {
         history.importHistory(item);
-      }
-      if (data.images.isNotEmpty) {
-        final imageFavoritesComicList = <ImageFavoritesComic>[];
-        final identities = <(String, String)>{};
-        for (final image in data.images) {
-          if (identities.add((image.id, image.sourceKey))) {
-            final existing = images.find(image.id, image.sourceKey);
-            if (existing != null) imageFavoritesComicList.add(existing);
-          }
-        }
-        for (final comic in data.images) {
-          final sourceKey = comic.sourceKey;
-          final id = comic.id;
-          final page = comic.page;
-          final ep = comic.ep;
-          final title = comic.title;
-          String epName = "";
-          ImageFavoritesComic? tempComic = imageFavoritesComicList
-              .firstWhereOrNull((e) => e.id == id && e.sourceKey == sourceKey);
-          ImageFavorite curImageFavorite = ImageFavorite(
-            page,
-            "",
-            null,
-            "",
-            id,
-            ep,
-            sourceKey,
-            epName,
-          );
-          if (tempComic == null) {
-            tempComic = ImageFavoritesComic(
-              id,
-              [],
-              title,
-              sourceKey,
-              [],
-              [],
-              now(),
-              "",
-              {},
-              "",
-              1,
-            );
-            tempComic.imageFavoritesEp = [
-              ImageFavoritesEp("", ep, [curImageFavorite], epName, 1),
-            ];
-            imageFavoritesComicList.add(tempComic);
-          } else {
-            ImageFavoritesEp? tempEp = tempComic.imageFavoritesEp
-                .firstWhereOrNull((e) => e.ep == ep);
-            if (tempEp == null) {
-              tempComic.imageFavoritesEp.add(
-                ImageFavoritesEp("", ep, [curImageFavorite], epName, 1),
-              );
-            } else {
-              // 如果已经有这个page了, 就不添加了
-              if (tempEp.imageFavorites.firstWhereOrNull(
-                    (e) => e.page == page,
-                  ) ==
-                  null) {
-                tempEp.imageFavorites.add(curImageFavorite);
-              }
-            }
-          }
-        }
-
-        images.saveAll(imageFavoritesComicList);
       }
     }, immediate: true);
   } finally {

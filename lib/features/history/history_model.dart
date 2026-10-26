@@ -3,7 +3,7 @@ import 'package:venera_next/foundation/comic_type.dart';
 import 'package:venera_next/foundation/history_contract.dart';
 import 'package:venera_next/foundation/translations.dart';
 
-class History implements Comic {
+class History implements Comic, ReadState {
   HistoryType type;
 
   DateTime time;
@@ -38,6 +38,7 @@ class History implements Comic {
   /// For normal chapters, it is a set of chapter numbers.
   /// For grouped chapters, it is a set of strings in the format of "group_number-chapter_number".
   /// 1-based.
+  @override
   Set<String> readEpisode;
 
   @override
@@ -96,6 +97,32 @@ class History implements Comic {
        id = model.id,
        readEpisode = readChapters ?? <String>{},
        time = time ?? DateTime.now();
+
+  /// The snapshot a reader starts from, given the metadata the source loaded.
+  ///
+  /// An entry that already carries metadata is returned unchanged, so callers
+  /// comparing instances keep their identity. A cleared history leaves only the
+  /// durable position, which has no title and no cover; metadata from the
+  /// loaded comic is layered underneath it. Writing progress from a bare
+  /// position used to re-create the history row without a cover, which is why
+  /// a cleared-then-read comic came back as a blank tile.
+  static History resume(History? stored, HistoryMixin model) {
+    if (stored == null) {
+      return History.fromModel(model: model, ep: 0, page: 0);
+    }
+    if (stored.title.isNotEmpty) return stored;
+    return History.fromModel(
+      model: model,
+      ep: stored.ep,
+      page: stored.page,
+      group: stored.group,
+    )
+      ..maxPage = stored.maxPage
+      ..chapterTitle = stored.chapterTitle
+      ..groupTitle = stored.groupTitle
+      ..time = stored.time
+      ..readEpisode.addAll(stored.readEpisode);
+  }
 
   History.fromMap(Map<String, dynamic> map)
     : type = HistoryType(map["type"]),

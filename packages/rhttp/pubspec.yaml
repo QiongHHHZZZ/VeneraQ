@@ -49,21 +49,12 @@ flutter:
   # This is required for using method channels on Android.
   # The 'ffiPlugin' specifies that native code should be built and bundled.
   # This is required for using `dart:ffi`.
-  # All these are used by the tooling to maintain consistency when
-  # adding or updating assets for this project.
   #
-  # Please refer to README.md for a detailed explanation.
+  # Only Android is declared: this fork ships no other platform directory, and
+  # an undeclared platform cannot be built by pub.
   plugin:
     platforms:
       android:
-        ffiPlugin: true
-      ios:
-        ffiPlugin: true
-      linux:
-        ffiPlugin: true
-      macos:
-        ffiPlugin: true
-      windows:
         ffiPlugin: true
 
   # To add assets to your plugin package, add an assets section, like this:

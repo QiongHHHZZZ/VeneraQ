@@ -1,18 +1,10 @@
-import 'import_export/pdf_import_tasks.dart';
 import 'local_storage_guard.dart';
 
-/// PDF tasks cancel cooperatively; remaining accepted storage work drains.
+/// Drain accepted local storage work before the window closes.
+///
+/// This used to also cancel PDF import tasks, which no longer exist. The guard
+/// still owns directory allocation for downloads and the exclusive migration
+/// and recovery operations, so their work has to finish before exit.
 Future<void Function()> prepareLocalImportsForExit() async {
-  final releasePdf = await PdfImportTasks.instance.prepareForExit();
-  try {
-    final releaseStorage = await LocalComicStorageGuard.instance
-        .prepareForExit();
-    return () {
-      releaseStorage();
-      releasePdf();
-    };
-  } catch (_) {
-    releasePdf();
-    rethrow;
-  }
+  return await LocalComicStorageGuard.instance.prepareForExit();
 }

@@ -4,6 +4,11 @@ import 'page_layout.dart';
 
 /// Map a loaded viewport to the existing persisted history coordinates.
 /// The caller gates loading and owns persistence scheduling.
+///
+/// [markRead] decides whether this position finishes the chapter. Opening a
+/// chapter only saves the position; the read mark lands when the last page is
+/// reached, which is what the library does. Marking on open made every chapter
+/// you glanced at look finished.
 void applyReaderHistoryProgress({
   required History history,
   required int page,
@@ -12,6 +17,7 @@ void applyReaderHistoryProgress({
   required ComicChapters? chapters,
   required ReaderPageLayout layout,
   required DateTime time,
+  bool markRead = false,
 }) {
   history.page = layout.historyImage(page, imageCount);
   history.maxPage = imageCount;
@@ -29,13 +35,18 @@ void applyReaderHistoryProgress({
       history.chapterTitle = chapters.allChapters.values.elementAt(chapter - 1);
     }
   }
+  // The position is always advanced so closing mid-chapter resumes there; only
+  // the read mark waits for the chapter to actually end.
   if (chapters?.isGrouped ?? false) {
+    if (markRead) {
+      final position = chapters!.positionAt(chapter);
+      history.readEpisode.add(position.historyKey);
+    }
     final position = chapters!.positionAt(chapter);
-    history.readEpisode.add(position.historyKey);
     history.ep = position.chapter;
     history.group = position.group;
   } else {
-    history.readEpisode.add(chapter.toString());
+    if (markRead) history.readEpisode.add(chapter.toString());
     history.ep = chapter;
     // Preserve the existing ungrouped update contract: do not rewrite group.
   }

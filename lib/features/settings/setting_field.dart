@@ -20,11 +20,8 @@ class SettingField<T> {
     this.preference,
     this.comicId,
     this.sourceKey,
-    bool useDeviceSettings = false,
   }) : scope = comicId != null
            ? ReaderPreferenceScope.comic
-           : useDeviceSettings
-           ? ReaderPreferenceScope.device
            : ReaderPreferenceScope.global;
 
   final String key;

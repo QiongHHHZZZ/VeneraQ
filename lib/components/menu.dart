@@ -389,34 +389,41 @@ class _MenuContentsState extends State<_MenuContents> {
                           }
                         },
                         borderRadius: BorderRadius.circular(4),
-                        onTap: () => widget.onSelect(entry),
+                        onTap: entry.enabled
+                            ? () => widget.onSelect(entry)
+                            : null,
                         child: ConstrainedBox(
                           constraints: const BoxConstraints(minHeight: 48),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 10,
-                            ),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                if (entry.icon != null) ...[
-                                  ExcludeSemantics(
-                                    child: Icon(
-                                      entry.icon,
-                                      size: 18,
-                                      color: entry.color,
+                          child: Opacity(
+                            // Dimming is what makes an unavailable entry read
+                            // as unavailable; the tap is already ignored above.
+                            opacity: entry.enabled ? 1 : 0.4,
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 10,
+                              ),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  if (entry.icon != null) ...[
+                                    ExcludeSemantics(
+                                      child: Icon(
+                                        entry.icon,
+                                        size: 18,
+                                        color: entry.color,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 12),
+                                  ],
+                                  Expanded(
+                                    child: Text(
+                                      entry.text,
+                                      style: TextStyle(color: entry.color),
                                     ),
                                   ),
-                                  const SizedBox(width: 12),
                                 ],
-                                Expanded(
-                                  child: Text(
-                                    entry.text,
-                                    style: TextStyle(color: entry.color),
-                                  ),
-                                ),
-                              ],
+                              ),
                             ),
                           ),
                         ),
@@ -433,9 +440,22 @@ class _MenuContentsState extends State<_MenuContents> {
 }
 
 class MenuEntry {
-  MenuEntry({required this.text, this.icon, this.color, required this.onClick});
+  MenuEntry({
+    required this.text,
+    this.icon,
+    this.color,
+    required this.onClick,
+    this.enabled = true,
+  });
   final String text;
   final IconData? icon;
   final Color? color;
   final VoidCallback onClick;
+
+  /// Whether the entry can be used right now.
+  ///
+  /// A disabled entry is drawn greyed and ignores taps instead of running an
+  /// action that has nothing to do, which is how the reader learns it is
+  /// unavailable rather than tapping into a no-op.
+  final bool enabled;
 }

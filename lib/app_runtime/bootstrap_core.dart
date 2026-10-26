@@ -10,6 +10,7 @@ import 'package:venera_next/features/comic_source/source_data_storage.dart';
 import 'package:venera_next/features/comic_source/source_transaction_journal.dart';
 import 'package:venera_next/features/favorites/favorites_manager.dart';
 import 'package:venera_next/features/history/history_manager.dart';
+import 'package:venera_next/features/local_comics/download_network_guard.dart';
 import 'package:venera_next/features/local_comics/local.dart';
 import 'package:venera_next/features/sync/app_data_import_journal.dart';
 import 'package:venera_next/features/sync/data_sync_ownership.dart';
@@ -22,18 +23,15 @@ import 'package:venera_next/foundation/opencc.dart';
 import 'package:venera_next/foundation/translations.dart';
 import 'package:venera_next/network/cookie_jar.dart';
 
-import 'package:venera_next/features/sync/legacy_auto_sync_migration.dart';
-
 import 'core_bootstrap.dart';
 import 'cache_settings.dart';
 import 'core_infrastructure.dart';
-import 'webdav_library.dart';
 
 /// Core startup never registers window callbacks or automatic sync timers.
-/// The caller owns this bootstrap instance and its data-change callback.
+/// The caller owns this bootstrap instance.
 CoreBootstrap createCoreBootstrap({
   Future<void> Function()? environment,
-  required void Function() onDataChanged,
+  void Function()? onDataChanged,
 }) {
   final cleanup = <CoreStartupCleanup>[];
   final producers = <CoreStartupCleanup>[];
@@ -157,13 +155,8 @@ CoreBootstrap createCoreBootstrap({
         },
       ));
       configureComicTypeSourceKeyResolver();
-      configureComicSourceDataSavedHandler(() async => onDataChanged());
-      final library = webDavLibrary;
-      registerProducer('WebDAV library', library.source.closeAndWait);
-      configureRuntimeComicSourcesProvider(
-        () => library.settings.read().connection.isValid
-            ? [library.source.create()]
-            : const [],
+      configureComicSourceDataSavedHandler(
+        onDataChanged == null ? null : () async => onDataChanged(),
       );
       final engine = JsEngine();
       registerProducer('JS engine', engine.closeAndWait);
@@ -202,6 +195,13 @@ CoreBootstrap createCoreBootstrap({
         storeCleanupIndex,
         stores.map((store) => (name: store.name, close: store.close)),
       );
+      // Watch the link type so "Download on WiFi Only" takes effect while the
+      // app runs, including after a reconnect.
+      DownloadNetworkGuard.instance.start();
+      registerProducer(
+        'download network guard',
+        () async => DownloadNetworkGuard.instance.stop(),
+      );
     },
     finish: () async {
       await _checkOldConfigs();
@@ -227,16 +227,48 @@ Future<void> _optional(
 }
 
 Future<void> _checkOldConfigs() async {
-  if (appdata.settings['searchSources'] == null) {
-    appdata.settings['searchSources'] = ComicSource.all()
-        .where((e) => e.searchPageData != null)
-        .map((e) => e.key)
-        .toList();
-  }
+  await _migrateMainPageIndex();
+  await _migrateDeviceSpecificReaderSettings();
+}
 
-  await migrateLegacyAutoSync(
-    implicitData: appdata.implicitData,
-    webdav: appdata.settings['webdav'],
-    persist: appdata.writeImplicitData,
-  );
+/// Device-specific reader settings were removed. A profile that had them
+/// enabled stored its overrides under `deviceSpecificSettings[deviceId]`, so
+/// dropping that scope blindly would silently reset those users to defaults.
+/// Fold this device's overrides into the global settings once, then drop the
+/// retired container. Other devices' records are discarded with the feature.
+Future<void> _migrateDeviceSpecificReaderSettings() async {
+  const marker = 'deviceSpecificReaderSettingsMigrated';
+  if (appdata.settings[marker] == true) return;
+  await appdata.updateSettings((draft) {
+    final container = draft['deviceSpecificSettings'];
+    final deviceId = draft['deviceId'];
+    if (container is Map && deviceId is String && deviceId.isNotEmpty) {
+      final record = container[deviceId];
+      if (record is Map && record['enabled'] == true) {
+        for (final entry in record.entries) {
+          // `enabled` is transport bookkeeping, not a reader setting.
+          if (entry.key == 'enabled' || entry.key is! String) continue;
+          draft[entry.key as String] = entry.value;
+        }
+      }
+    }
+    draft['deviceSpecificSettings'] = <String, dynamic>{};
+    draft['deviceId'] = '';
+    draft[marker] = true;
+  }, sync: false);
+}
+
+/// The follow-up updates tab was removed, so every tab after it moved down one.
+/// Older indices would otherwise open a different page than the user chose.
+Future<void> _migrateMainPageIndex() async {
+  const marker = 'mainPageIndexMigrated';
+  if (appdata.settings[marker] == true) return;
+  await appdata.updateSettings((draft) {
+    final raw = draft['initialPage'];
+    final index = raw is int ? raw : int.tryParse(raw?.toString().trim() ?? '');
+    if (index != null && index >= 1 && index <= 3) {
+      draft['initialPage'] = '${index - 1}';
+    }
+    draft[marker] = true;
+  }, sync: false);
 }

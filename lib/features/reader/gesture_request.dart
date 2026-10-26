@@ -14,13 +14,9 @@ class ReaderGestureRequest {
     required this.preferences,
     required this.vertical,
     required this.reversed,
-    required this.onCommentsPage,
     required this.canUseImage,
     required this.turnPage,
     required this.turnWheel,
-    required this.toggleAutomaticReading,
-    required this.stopAutomaticReading,
-    required this.acquirePause,
     required this.fullscreen,
     required this.exit,
   }) : isTargetCurrent = isTargetCurrent ?? isCurrent;
@@ -34,11 +30,8 @@ class ReaderGestureRequest {
   final Listenable? targetChanges;
   final ReaderImageViewController? viewport;
   final ReaderSettings preferences;
-  final bool vertical, reversed, onCommentsPage, canUseImage;
+  final bool vertical, reversed, canUseImage;
   final void Function(bool forward) turnPage, turnWheel;
-  final void Function() toggleAutomaticReading,
-      stopAutomaticReading,
-      fullscreen;
-  final void Function() Function() acquirePause;
+  final void Function() fullscreen;
   final Future<void> Function() exit;
 }

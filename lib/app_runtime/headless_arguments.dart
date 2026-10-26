@@ -1,6 +1,6 @@
 import 'package:venera_next/foundation/res.dart';
 
-enum HeadlessCommand { webdav, updateScript, updateSubscribe }
+enum HeadlessCommand { updateScript, updateSubscribe }
 
 class HeadlessRequest {
   const HeadlessRequest(this.command, {this.subcommand, this.comic});
@@ -22,13 +22,6 @@ Res<HeadlessRequest> parseHeadlessArguments(List<String> args) {
     return const Res.error('No command provided for headless mode.');
   }
   switch (values.first) {
-    case 'webdav':
-      if (values.length != 2 || !['up', 'down'].contains(values[1])) {
-        return const Res.error('Invalid webdav command. Use "up" or "down".');
-      }
-      return Res(
-        HeadlessRequest(HeadlessCommand.webdav, subcommand: values[1]),
-      );
     case 'updatescript':
       if (values.length != 2 || values[1] != 'all') {
         return const Res.error('Invalid updatescript command. Use "all".');

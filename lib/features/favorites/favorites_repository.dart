@@ -42,22 +42,21 @@ class FavoritesRepository {
 
   bool isPreparedForFollowUpdates(String folder) => _columns(
     folder,
-  ).containsAll(['last_update_time', 'has_new_update', 'last_check_time']);
+  ).containsAll(['last_update_time', 'last_check_time']);
 
   void prepareForFollowUpdates(String folder, {required bool clearData}) =>
       _transaction(() {
         final columns = _columns(folder);
         for (final (name, type) in [
           ('last_update_time', 'TEXT'),
-          ('has_new_update', 'INT'),
           ('last_check_time', 'INT'),
+          ('chapter_count', 'INT'),
         ]) {
           if (!columns.contains(name)) {
             db.execute('ALTER TABLE ${_table(folder)} ADD COLUMN $name $type;');
           }
         }
         if (clearData) {
-          db.execute('UPDATE ${_table(folder)} SET has_new_update = 0;');
         }
       });
 
@@ -65,7 +64,7 @@ class FavoritesRepository {
     db.execute('''
       CREATE TABLE ${_table(folder)} (
         id TEXT, name TEXT, author TEXT, type INT, tags TEXT, cover_path TEXT,
-        time TEXT, display_order INT, translated_tags TEXT,
+        time TEXT, display_order INT, translated_tags TEXT, chapter_count INT,
         PRIMARY KEY (id, type)
       );
     ''');
@@ -138,6 +137,7 @@ class FavoritesRepository {
     required bool append,
     int? order,
     String? updateTime,
+    int? chapterCount,
     String? schema,
   }) => _transaction(() {
     if (comicExists(folder, item.id, item.type.value, schema: schema)) {
@@ -148,11 +148,32 @@ class FavoritesRepository {
         (append
             ? maxValue(folder, schema: schema) + 1
             : minValue(folder, schema: schema) - 1);
+    final table = _qualifiedTable(folder, schema);
+    var columns = db
+        .select(
+          'PRAGMA ${schema == null ? '' : '${_table(schema)}.'}table_info(${_table(folder)});',
+        )
+        .map((row) => row['name'] as String)
+        .toSet();
+    // Store the chapter total at collection time, so the shelf badge is right
+    // before the first update check runs.
+    //
+    // A library created before this column existed gets it here: without the
+    // migration the write would be skipped and the badge would stay empty until
+    // the reader happened to run an update check.
+    if (chapterCount != null && !columns.contains('chapter_count')) {
+      db.execute(
+        'ALTER TABLE ${schema == null ? '' : '${_table(schema)}.'}${_table(folder)} ADD COLUMN chapter_count INT;',
+      );
+      columns = {...columns, 'chapter_count'};
+    }
+    final storeChapterCount =
+        chapterCount != null && columns.contains('chapter_count');
     db.execute(
       '''
-      INSERT INTO ${_qualifiedTable(folder, schema)}
-        (id, name, author, type, tags, cover_path, time, translated_tags, display_order)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+      INSERT INTO $table
+        (id, name, author, type, tags, cover_path, time, translated_tags, display_order${storeChapterCount ? ', chapter_count' : ''})
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?${storeChapterCount ? ', ?' : ''});
     ''',
       [
         item.id,
@@ -164,16 +185,12 @@ class FavoritesRepository {
         item.time,
         translatedTags,
         position,
+        if (storeChapterCount) chapterCount,
       ],
     );
-    if (updateTime != null &&
-        db
-            .select(
-              'PRAGMA ${schema == null ? '' : '${_table(schema)}.'}table_info(${_table(folder)});',
-            )
-            .any((row) => row['name'] == 'last_update_time')) {
+    if (updateTime != null && columns.contains('last_update_time')) {
       db.execute(
-        'UPDATE ${_qualifiedTable(folder, schema)} SET last_update_time = ? WHERE id = ? AND type = ?;',
+        'UPDATE $table SET last_update_time = ? WHERE id = ? AND type = ?;',
         [updateTime, item.id, item.type.value],
       );
     }
@@ -212,6 +229,34 @@ class FavoritesRepository {
 
   /// Metadata and tracking time are one logical commit. An unchanged time
   /// preserves an unread update flag from a previous check.
+  /// Stores the chapter total for one favorite.
+  ///
+  /// The update timestamp and its flag are gone with the tracking feature; only
+  /// the total remains, because the unread badge is derived from it.
+  void applyChapterRefresh(
+    String folder,
+    FavoriteItem item,
+    int checkedAt, {
+    int? chapterCount,
+  }) => _transaction(() {
+    final row = db.select(
+      'SELECT 1 FROM ${_table(folder)} WHERE id = ? AND type = ?;',
+      [item.id, item.type.value],
+    ).firstOrNull;
+    if (row == null) throw StateError('Favorite no longer exists');
+    if (chapterCount != null) {
+      if (!_columns(folder).contains('chapter_count')) {
+        db.execute(
+          'ALTER TABLE ${_table(folder)} ADD COLUMN chapter_count INT;',
+        );
+      }
+      db.execute(
+        'UPDATE ${_table(folder)} SET chapter_count = ? WHERE id = ? AND type = ?;',
+        [chapterCount, item.id, item.type.value],
+      );
+    }
+  });
+
   bool applyFollowUpdate(
     String folder,
     FavoriteItem item,
@@ -428,7 +473,7 @@ class FavoritesRepository {
     bool updatedOnly = false,
   }) => db
       .select(
-        'SELECT id, type FROM ${_table(folder)}${updatedOnly ? " WHERE has_new_update = 1" : ""};',
+        'SELECT id, type FROM ${_table(folder)};',
       )
       .map((row) => (row['id'] as String, row['type'] as int))
       .toList();
@@ -445,31 +490,48 @@ class FavoritesRepository {
     ]);
   }
 
-  /// Returns folders actually changed, only after all writes commit.
-  List<String> recordRead(
+  /// Moves the old record's placement onto the new identity.
+  ///
+  /// Every folder that held `oldId` now holds `newId` with the same ordering and
+  /// tags, and the old row is removed. A row already present under the new
+  /// identity is replaced so a folder never ends up with two copies.
+  void moveOnto(
     Iterable<String> folders,
-    String id,
-    int type, {
-    required String time,
-    required String? movement,
-    required String? trackingFolder,
-  }) => _transaction(() {
-    final changed = <String>[];
-    for (final folder in folders) {
-      if (!comicExists(folder, id, type)) continue;
-      final position = switch (movement) {
-        'start' => minValue(folder) - 1,
-        'end' => maxValue(folder) + 1,
-        _ => null,
-      };
-      db.execute(
-        'UPDATE ${_table(folder)} SET ${position == null ? "" : "display_order = ?, "}${folder == trackingFolder ? "has_new_update = 0, " : ""}time = ? WHERE id = ? AND type = ?;',
-        [?position, time, id, type],
-      );
-      changed.add(folder);
-    }
-    return changed;
-  });
+    String oldId,
+    int oldType,
+    String newId,
+    int newType,
+  ) {
+    _transaction(() {
+      for (final folder in folders) {
+        final rows = db.select(
+          'SELECT display_order, tags, time FROM ${_table(folder)} '
+          'WHERE id = ? AND type = ?;',
+          [oldId, oldType],
+        );
+        if (rows.isEmpty) continue;
+        final row = rows.first;
+        db.execute(
+          'DELETE FROM ${_table(folder)} WHERE id = ? AND type = ?;',
+          [newId, newType],
+        );
+        db.execute(
+          'UPDATE ${_table(folder)} SET id = ?, type = ? '
+          'WHERE id = ? AND type = ?;',
+          [newId, newType, oldId, oldType],
+        );
+        // Keep the ordering the reader gave the old entry.
+        final order = row['display_order'];
+        if (order is int) {
+          db.execute(
+            'UPDATE ${_table(folder)} SET display_order = ? '
+            'WHERE id = ? AND type = ?;',
+            [order, newId, newType],
+          );
+        }
+      }
+    });
+  }
 
   bool updateUpdateTime(
     String folder,
@@ -484,8 +546,8 @@ class FavoritesRepository {
     ).first['last_update_time'];
     final changed = oldTime != updateTime;
     db.execute(
-      'UPDATE ${_table(folder)} SET last_update_time = ?, has_new_update = ?, last_check_time = ? WHERE id = ? AND type = ?;',
-      [updateTime, changed ? 1 : 0, checkedAt, id, type],
+      'UPDATE ${_table(folder)} SET last_update_time = ?, last_check_time = ? WHERE id = ? AND type = ?;',
+      [updateTime, checkedAt, id, type],
     );
     return changed;
   });
@@ -497,36 +559,40 @@ class FavoritesRepository {
     );
   }
 
-  int countUpdates(String folder) =>
-      db
-              .select(
-                'SELECT COUNT(*) AS c FROM ${_table(folder)} WHERE has_new_update = 1;',
-              )
-              .first['c']
-          as int;
+  /// Chapter totals recorded by the last check, across [folders].
+  Map<(String, int), int> chapterCounts(Iterable<String> folders) {
+    final result = <(String, int), int>{};
+    for (final folder in folders) {
+      if (!_columns(folder).contains('chapter_count')) continue;
+      for (final row in db.select(
+        'SELECT id, type, chapter_count FROM ${_table(folder)} '
+        'WHERE chapter_count IS NOT NULL;',
+      )) {
+        final id = row['id'];
+        final type = row['type'];
+        final count = row['chapter_count'];
+        if (id is String && type is int && count is int) {
+          result[(id, type)] = count;
+        }
+      }
+    }
+    return result;
+  }
 
   List<FavoriteItemWithUpdateInfo> getComicsWithUpdatesInfo(
     String folder, {
     bool updatedOnly = false,
   }) => db
       .select(
-        'SELECT * FROM ${_table(folder)}${updatedOnly ? " WHERE has_new_update = 1" : ""};',
+        'SELECT * FROM ${_table(folder)};',
       )
       .map(favoriteItemWithUpdateInfoFromRow)
       .toList();
 
-  void markAsRead(String folder, String id, int type) {
-    db.execute(
-      'UPDATE ${_table(folder)} SET has_new_update = 0 WHERE id = ? AND type = ?;',
-      [id, type],
-    );
-  }
 
   void markComicsAsRead(String folder, Iterable<(String, int)> identities) =>
       _transaction(() {
-        for (final (id, type) in identities.toSet()) {
-          markAsRead(folder, id, type);
-        }
+        // The read set lives in history; there is no per-row flag to clear here.
       });
 
   void reorder(

@@ -1,10 +1,7 @@
 import 'package:venera_next/foundation/operation_failure.dart';
-import 'package:venera_next/foundation/global_preference_store.dart';
-import 'package:venera_next/foundation/application_preferences.dart';
 import 'network_favorite_import.dart';
 import 'favorite_folder_import.dart';
 import 'favorite_updates_service.dart';
-import 'read_later_service.dart';
 import 'package:venera_next/foundation/app_data_operations.dart';
 import 'package:venera_next/foundation/persistence_failure.dart';
 import 'package:venera_next/foundation/sqlite_transaction.dart';
@@ -43,6 +40,12 @@ void _notifyFollowUpdatesChanged() {
     () => _followUpdatesChangeListener?.call(),
   );
 }
+
+/// Folder a brand-new library starts with, so the first favorite has a home.
+///
+/// It keeps the name the old tracking folder used, so an upgraded install sees
+/// the same folder it always had; nothing marks it as special any more.
+const defaultFolderName = '漫画';
 
 class LocalFavoritesManager with ChangeNotifier {
   factory LocalFavoritesManager() => _cache ??= LocalFavoritesManager._create();
@@ -118,9 +121,12 @@ class LocalFavoritesManager with ChangeNotifier {
     FavoriteItem comic, [
     int? order,
     String? updateTime,
+    int? chapterCount,
   ]) {
     final captured = comic.detached();
-    return _mutate(() => _addComic(folder, captured, order, updateTime));
+    return _mutate(
+      () => _addComic(folder, captured, order, updateTime, chapterCount),
+    );
   }
 
   /// One accepted selection commits atomically, then publishes its exact result.
@@ -132,11 +138,7 @@ class LocalFavoritesManager with ChangeNotifier {
           if (!existsFolder(folder)) {
             throw StateError('Favorite folder no longer exists');
           }
-          final append =
-              GlobalPreferenceStore(
-                appdata.settings,
-              ).read(FavoritePreferences.newFavoriteAddTo) ==
-              'end';
+          final append = true;
           return [
             for (final comic in captured)
               if (_repository.addComic(
@@ -176,14 +178,7 @@ class LocalFavoritesManager with ChangeNotifier {
       if (!existsFolder(folder)) {
         throw const FormatException('Favorite folder no longer exists');
       }
-      final comic = commit(
-        _dbPath,
-        _translateTags(capturedTags),
-        GlobalPreferenceStore(
-              appdata.settings,
-            ).read(FavoritePreferences.newFavoriteAddTo) ==
-            'end',
-      );
+      final comic = commit(_dbPath, _translateTags(capturedTags), true);
       // Read the committed count; do not increment a possibly stale cache after
       // a transaction that also changed another database.
       _publishCommittedFavorites([folder], [(comic.id, comic.type.value)]);
@@ -254,9 +249,23 @@ class LocalFavoritesManager with ChangeNotifier {
     return _mutate(() => _batchDeleteComics(folder, captured));
   }
 
-  Future<int> removeInvalid({
-    required bool Function(String id) localComicExists,
-  }) => _mutate(() => _removeInvalid(localComicExists));
+  /// Removes these comics from the library entirely, whichever folders hold
+  /// them.
+  ///
+  /// The shelf's "All" view shows comics from every folder at once, so removing
+  /// one from "the current folder" means nothing there. This is the operation
+  /// that view can offer: it drops every membership of the selected comics.
+  Future<void> batchRemoveFromLibrary(List<FavoriteItem> comics) {
+    final captured = comics.map((item) => item.detached()).toList();
+    return _mutate(() {
+      for (final comic in captured) {
+        final folders = find(comic.id, comic.type);
+        for (final folder in folders) {
+          _deleteComicWithId(folder, comic.id, comic.type);
+        }
+      }
+    });
+  }
 
   Future<void> reorder(List<FavoriteItem> newFolder, String folder) {
     final captured = newFolder.map((item) => item.detached()).toList();
@@ -274,12 +283,29 @@ class LocalFavoritesManager with ChangeNotifier {
   }) => _mutate(() {
     if (generation != null) _checkSourceGeneration(generation);
     checkActive?.call();
-    _onRead(id, type);
+    _markAsRead(id, type);
   });
 
   Future<void> editTags(String id, String folder, List<String> tags) {
     final captured = List<String>.of(tags);
     return _mutate(() => _editTags(id, folder, captured));
+  }
+
+  /// Moves [oldId]'s placement onto [newId] and removes the old entry.
+  ///
+  /// Used when the reader finds the same comic on a working source: the shelf
+  /// should keep one entry, carrying the old folders and ordering.
+  void moveFavoriteOnto({
+    required Iterable<String> folders,
+    required String oldId,
+    required ComicType oldType,
+    required String newId,
+    required ComicType newType,
+  }) {
+    _repository.moveOnto(folders, oldId, oldType.value, newId, newType.value);
+    _refreshIdentityCounts([(oldId, oldType.value), (newId, newType.value)]);
+    refreshUpdateIds();
+    notifyListeners();
   }
 
   int get connectionGeneration => _connectionGeneration;
@@ -306,32 +332,27 @@ class LocalFavoritesManager with ChangeNotifier {
     });
   }
 
-  Future<bool> applyFollowUpdate(
+  /// Stores the chapter total for one favorite.
+  ///
+  /// The update timestamp and its flag are gone with the tracking feature; only
+  /// the total remains, because the unread badge is derived from it.
+  Future<void> applyFollowUpdate(
     String folder,
-    FavoriteItem comic,
-    String? updateTime, {
+    FavoriteItem comic, {
     required int generation,
     required void Function() checkActive,
+    int? chapterCount,
   }) {
     final captured = comic.detached();
     return _mutate(() {
       _checkSourceGeneration(generation);
       checkActive();
-      final updated = _repository.applyFollowUpdate(
+      _repository.applyChapterRefresh(
         folder,
         captured,
-        updateTime,
         DateTime.now().millisecondsSinceEpoch,
+        chapterCount: chapterCount,
       );
-      if (updated) {
-        _updates.recordCommittedUpdate(
-          folder,
-          captured.id,
-          captured.type.value,
-          true,
-        );
-      }
-      return updated;
     });
   }
 
@@ -399,49 +420,6 @@ class LocalFavoritesManager with ChangeNotifier {
     });
   }
 
-  Future<void> setFollowUpdatesFolder(
-    String? folder, {
-    required int generation,
-  }) => _mutate(() async {
-    _checkSourceGeneration(generation);
-    if (folder != null && !existsFolder(folder)) {
-      throw StateError('Favorite folder no longer exists');
-    }
-    await _finishFolderMutation(
-      () => appdata.updateSettings((draft) {
-        _checkSourceGeneration(generation);
-        if (folder != null && !existsFolder(folder)) {
-          throw StateError('Favorite folder no longer exists');
-        }
-        draft[FavoritePreferences.followUpdatesFolder.key] = folder;
-      }),
-      () => true,
-      commitState: PersistenceCommitState.unknown,
-    );
-  });
-
-  /// Recheck a stale preview at the settings queue head. A newer selection or
-  /// a folder restored while admission was blocked must remain untouched.
-  Future<void> clearMissingFollowUpdatesFolder(
-    String expected, {
-    required int generation,
-  }) => _mutate(() async {
-    _checkSourceGeneration(generation);
-    var changed = false;
-    await _finishFolderMutation(
-      () => appdata.updateSettings((draft) {
-        _checkSourceGeneration(generation);
-        if (draft[FavoritePreferences.followUpdatesFolder.key] == expected &&
-            !existsFolder(expected)) {
-          draft[FavoritePreferences.followUpdatesFolder.key] = null;
-          changed = true;
-        }
-      }),
-      () => changed,
-      commitState: PersistenceCommitState.unknown,
-    );
-  });
-
   @override
   void notifyListeners() =>
       AppDataOperations.instance.publish(super.notifyListeners);
@@ -487,10 +465,7 @@ class LocalFavoritesManager with ChangeNotifier {
   }
 
   void notifyImportedFavorites(Iterable<String> folders) {
-    _publishFavoriteChanges([
-      () => _syncFollowUpdatesIfAffected(folders),
-      notifyListeners,
-    ]);
+    _publishFavoriteChanges([notifyListeners]);
   }
 
   Map<String, int> counts = {};
@@ -499,9 +474,7 @@ class LocalFavoritesManager with ChangeNotifier {
 
   late final _updates = FavoriteUpdatesService(
     repository: () => _repository,
-    folder: () => GlobalPreferenceStore(
-      appdata.settings,
-    ).read(FavoritePreferences.followUpdatesFolder),
+    folders: () => folderNames,
   );
 
   Future<void>? _hashedIdsRefresh;
@@ -609,26 +582,18 @@ class LocalFavoritesManager with ChangeNotifier {
     try {
       if (App.isInitialized) await appdata.ensureInit();
       _checkInitialization(generation);
-      final databaseExisted = File(path).existsSync();
       database = openSqliteDatabase(path);
       final repository = FavoritesRepository(database);
       repository.initializeMetadata();
-      final folders = repository.folderNames();
+      var folders = repository.folderNames();
+      if (folders.isEmpty) {
+        // Collecting needs somewhere to put the comic. An empty library gets one
+        // plain folder so the first favorite works; it is an ordinary folder and
+        // can be renamed or deleted afterwards.
+        repository.createFolder(defaultFolderName);
+        folders = repository.folderNames();
+      }
       repository.migrateTranslatedTags(folders, _translateTags);
-      if (!databaseExisted && folders.isEmpty) {
-        repository.createFolder(trackingFolderName);
-        folders.add(trackingFolderName);
-      }
-      void prepareTracking(Object? folder) {
-        if (folder is String && repository.folderNames().contains(folder)) {
-          repository.prepareForFollowUpdates(folder, clearData: false);
-        }
-      }
-
-      prepareTracking(
-        appdata.settings[FavoritePreferences.followUpdatesFolder.key],
-      );
-      if (!databaseExisted) prepareTracking(trackingFolderName);
       _checkInitialization(generation);
       _database = database;
       published = true;
@@ -637,53 +602,9 @@ class LocalFavoritesManager with ChangeNotifier {
       counts = {};
       final retryingWrite =
           retryPendingSettings && _pendingSettingsRepairs.contains(path);
-      var changed = false;
       try {
-        while (true) {
-          final unprepared = await appdata.updateSettings(
-            (draft) {
-              _checkInitialization(generation);
-              final available = repository.folderNames();
-              String? resolve(Object? value) =>
-                  value is String && available.contains(value)
-                  ? value
-                  : !databaseExisted && available.contains(trackingFolderName)
-                  ? trackingFolderName
-                  : null;
-              final tracking = resolve(
-                draft[FavoritePreferences.followUpdatesFolder.key],
-              );
-              final quick = resolve(
-                draft[FavoritePreferences.quickFavorite.key],
-              );
-              // A preceding queued edit may select another valid folder. Prepare
-              // its schema outside the draft before publishing any repaired value.
-              if (tracking != null &&
-                  !repository.isPreparedForFollowUpdates(tracking)) {
-                return tracking;
-              }
-              changed =
-                  draft[FavoritePreferences.followUpdatesFolder.key] !=
-                      tracking ||
-                  draft[FavoritePreferences.quickFavorite.key] != quick;
-              if (draft[FavoritePreferences.followUpdatesFolder.key] !=
-                  tracking) {
-                draft[FavoritePreferences.followUpdatesFolder.key] = tracking;
-              }
-              if (draft[FavoritePreferences.quickFavorite.key] != quick) {
-                draft[FavoritePreferences.quickFavorite.key] = quick;
-              }
-              return null;
-            },
-            sync: false,
-            persistIfUnchanged: false,
-          );
-          _checkInitialization(generation);
-          if (unprepared == null) break;
-          prepareTracking(unprepared);
-        }
-        if (retryingWrite && !changed) await appdata.saveData(false);
-        if (changed || retryingWrite) _pendingSettingsRepairs.remove(path);
+        if (retryingWrite) await appdata.saveData(false);
+        _pendingSettingsRepairs.remove(path);
       } catch (_) {
         _pendingSettingsRepairs.add(path);
         rethrow;
@@ -712,101 +633,8 @@ class LocalFavoritesManager with ChangeNotifier {
 
   Future<void> refreshHashedIds() => _refreshHashedIds();
 
-  static const String trackingFolderName = "追更";
-
-  late final _readLater = ReadLaterService(
-    repository: () => _repository,
-    configuredFolder: () => GlobalPreferenceStore(
-      appdata.settings,
-    ).read(FavoritePreferences.readLaterFolder),
-    translateTags: _translateTags,
-  );
-
-  String? get readLaterFolder => _readLater.folder;
-
-  bool isInReadLater(String id, ComicType type) =>
-      _readLater.contains(id, type);
-
-  List<FavoriteItem> getReadLaterComics({int? limit}) =>
-      _readLater.comics(limit: limit);
-
-  Future<void> setReadLater(
-    FavoriteItem comic, {
-    required bool included,
-    required String folderName,
-  }) {
-    final captured = comic.detached();
-    // This short compound operation changes SQL and its settings reference.
-    // Acquire exclusion before the local queue; no network work occurs here.
-    return AppDataOperations.instance.run(
-      () => _mutate(() async {
-        final generation = _connectionGeneration;
-        late ReadLaterCommit commit;
-        try {
-          commit = _readLater.set(
-            captured,
-            included: included,
-            folderName: folderName,
-          );
-        } on SqliteTransactionRollbackError catch (error, stack) {
-          Error.throwWithStackTrace(
-            PersistenceFailure(
-              commitState: PersistenceCommitState.unknown,
-              cause: error.operationError,
-              stackTrace: error.operationStack,
-              cleanupFailures: [
-                (error: error.rollbackError, stackTrace: error.rollbackStack),
-              ],
-            ),
-            stack,
-          );
-        }
-        final failures = <({Object error, StackTrace stackTrace})>[];
-        try {
-          await appdata.updateSettings((draft) {
-            _checkSourceGeneration(generation);
-            if (commit.created) {
-              draft[FavoritePreferences.readLaterFolder.key] = commit.folder;
-            }
-          });
-        } catch (error, stack) {
-          failures.add((error: error, stackTrace: stack));
-        }
-        try {
-          final folder = commit.folder;
-          if (folder != null && (commit.created || commit.added)) {
-            _publishCommittedFavorites(
-              [folder],
-              [(captured.id, captured.type.value)],
-            );
-          } else if (folder != null && commit.removed) {
-            _applyDeletedComics({
-              folder: [(captured.id, captured.type.value)],
-            });
-          }
-        } catch (error, stack) {
-          failures.add((error: error, stackTrace: stack));
-        }
-        if (failures.isNotEmpty) {
-          if (failures.length == 1) {
-            _throwCommittedFailure(
-              failures.single.error,
-              failures.single.stackTrace,
-            );
-          }
-          Error.throwWithStackTrace(
-            PersistenceFailure(
-              commitState: PersistenceCommitState.committed,
-              cause: failures.first.error,
-              stackTrace: failures.first.stackTrace,
-              cleanupFailures: failures.skip(1),
-            ),
-            failures.first.stackTrace,
-          );
-        }
-      }),
-    );
-  }
+  /// The folder a fresh install starts with.
+  ///
 
   Future<void> _refreshHashedIds({
     void Function(void Function())? publishChange,
@@ -857,17 +685,6 @@ class LocalFavoritesManager with ChangeNotifier {
   }
 
   void refreshUpdateIds() => _updates.refresh();
-
-  void _syncFollowUpdatesIfAffected(Iterable<String> folders) {
-    var folder = GlobalPreferenceStore(
-      appdata.settings,
-    ).read(FavoritePreferences.followUpdatesFolder);
-    if (folder == null || !folders.contains(folder)) {
-      return;
-    }
-    refreshUpdateIds();
-    _notifyFollowUpdatesChanged();
-  }
 
   void _refreshIdentityCounts(Iterable<(String, int)> identities) {
     final requested = identities.toSet();
@@ -1070,6 +887,7 @@ class LocalFavoritesManager with ChangeNotifier {
     FavoriteItem comic, [
     int? order,
     String? updateTime,
+    int? chapterCount,
   ]) {
     if (!existsFolder(folder)) {
       throw Exception("Folder does not exists");
@@ -1078,13 +896,10 @@ class LocalFavoritesManager with ChangeNotifier {
       folder,
       comic,
       translatedTags: _translateTags(comic.tags),
-      append:
-          GlobalPreferenceStore(
-            appdata.settings,
-          ).read(FavoritePreferences.newFavoriteAddTo) ==
-          "end",
+      append: true,
       order: order,
       updateTime: updateTime,
+      chapterCount: chapterCount,
     );
     if (!added) return false;
     _publishCommittedFavorites([folder], [(comic.id, comic.type.value)]);
@@ -1184,24 +999,6 @@ class LocalFavoritesManager with ChangeNotifier {
     try {
       counts.remove(name);
       _refreshIdentityCounts(removedIdentities);
-      var followChanged = false;
-      await _finishFolderMutation(
-        () => appdata.updateSettings((draft) {
-          for (final key in [
-            FavoritePreferences.readLaterFolder.key,
-            FavoritePreferences.quickFavorite.key,
-            FavoritePreferences.followUpdatesFolder.key,
-          ]) {
-            if (draft[key] == name) {
-              draft[key] = null;
-              if (key == FavoritePreferences.followUpdatesFolder.key) {
-                followChanged = true;
-              }
-            }
-          }
-        }),
-        () => followChanged,
-      );
     } catch (error, stack) {
       _throwCommittedFailure(error, stack);
     }
@@ -1257,7 +1054,10 @@ class LocalFavoritesManager with ChangeNotifier {
     _publishFavoriteChanges([
       for (final folder in affected) () => counts[folder] = count(folder),
       () => _refreshIdentityCounts(identities),
-      () => _syncFollowUpdatesIfAffected(affected),
+      // The chapter total written by this collect lives in the database, while
+      // the shelf badge reads a cached snapshot; refresh it in place so the
+      // number shows up without waiting for a manual pull-to-refresh.
+      refreshUpdateIds,
       notifyListeners,
     ]);
   }
@@ -1341,7 +1141,6 @@ class LocalFavoritesManager with ChangeNotifier {
           }
         }
       },
-      () => _syncFollowUpdatesIfAffected(removed.keys),
       notifyListeners,
     ]);
   }
@@ -1372,22 +1171,6 @@ class LocalFavoritesManager with ChangeNotifier {
     } catch (error, stack) {
       _throwCommittedFailure(error, stack);
     }
-  }
-
-  Future<int> _removeInvalid(bool Function(String id) localComicExists) async {
-    int count = 0;
-    await Future.microtask(() {
-      var all = allComics();
-      for (var c in all) {
-        var comicSource = c.type.comicSource;
-        if ((c.type == ComicType.local && !localComicExists(c.id)) ||
-            (c.type != ComicType.local && comicSource == null)) {
-          _deleteComicWithId(c.folder, c.id, c.type);
-          count++;
-        }
-      }
-    });
-    return count;
   }
 
   Future<void> clearAll() {
@@ -1423,10 +1206,6 @@ class LocalFavoritesManager with ChangeNotifier {
   }
 
   Future<void> _clearDatabase(String path) async {
-    final previousTracking =
-        appdata.settings[FavoritePreferences.followUpdatesFolder.key];
-    final previousQuick =
-        appdata.settings[FavoritePreferences.quickFavorite.key];
     await _closeAndWait();
     Directory? backupDirectory;
     FileReplacement? replacement;
@@ -1455,12 +1234,7 @@ class LocalFavoritesManager with ChangeNotifier {
       final closed = await recover(_closeAndWait);
       final restored =
           closed && (!prepared || await recover(() => replacement!.restore()));
-      await recover(
-        () => appdata.restoreSettingsFields({
-          FavoritePreferences.followUpdatesFolder.key: previousTracking,
-          FavoritePreferences.quickFavorite.key: previousQuick,
-        }, persist: false),
-      );
+      await recover(() => appdata.restoreSettingsFields({}, persist: false));
       if (restored) {
         // An unavailable settings file must not prevent reopening the restored
         // database. The separate flush below still reports durability failure.
@@ -1546,55 +1320,6 @@ class LocalFavoritesManager with ChangeNotifier {
     _repository.renameFolder(before, after);
     counts[after] = counts[before] ?? 0;
     counts.remove(before);
-    var followChanged = false;
-    await _finishFolderMutation(
-      () => appdata.updateSettings((draft) {
-        for (final key in [
-          FavoritePreferences.readLaterFolder.key,
-          FavoritePreferences.quickFavorite.key,
-          FavoritePreferences.followUpdatesFolder.key,
-        ]) {
-          if (draft[key] == before) {
-            draft[key] = after;
-            if (key == FavoritePreferences.followUpdatesFolder.key) {
-              followChanged = true;
-            }
-          }
-        }
-      }),
-      () => followChanged,
-    );
-  }
-
-  void _onRead(String id, ComicType type) {
-    final movement = GlobalPreferenceStore(
-      appdata.settings,
-    ).read(FavoritePreferences.moveFavoriteAfterRead);
-    if (movement == "none") {
-      _markAsRead(id, type);
-      return;
-    }
-    var followUpdatesFolder = GlobalPreferenceStore(
-      appdata.settings,
-    ).read(FavoritePreferences.followUpdatesFolder);
-    final changed = _repository.recordRead(
-      folderNames.where((folder) => folder != readLaterFolder),
-      id,
-      type.value,
-      time: DateTime.now()
-          .toIso8601String()
-          .replaceFirst('T', ' ')
-          .substring(0, 19),
-      movement: movement,
-      trackingFolder: followUpdatesFolder,
-    );
-    _publishFavoriteChanges([
-      if (changed.contains(followUpdatesFolder)) ...[
-        () => _updates.recordCommittedRead(id, type.value),
-        _notifyFollowUpdatesChanged,
-      ],
-      notifyListeners,
-    ]);
   }
 
   List<FavoriteItem> searchInFolder(String folder, String keyword) =>
@@ -1612,8 +1337,9 @@ class LocalFavoritesManager with ChangeNotifier {
     return _identityIndex.contains(id, type.value);
   }
 
-  bool hasNewUpdate(String id, ComicType type) =>
-      _updates.contains(id, type.value);
+  /// Chapters recorded by the last update check, or null when unknown.
+  int? chapterCountOf(String id, ComicType type) =>
+      _updates.chapterCountFor(id, type.value);
 
   void _updateInfo(String folder, FavoriteItem comic, [bool notify = true]) {
     _commitFavoriteTransaction(() => _repository.updateInfo(folder, comic));
@@ -1650,11 +1376,7 @@ class LocalFavoritesManager with ChangeNotifier {
       source: source,
       folderId: folderId,
       items: items,
-      append:
-          GlobalPreferenceStore(
-            appdata.settings,
-          ).read(FavoritePreferences.newFavoriteAddTo) ==
-          'end',
+      append: true,
       oldToNew: oldToNew,
       translateTags: _translateTags,
     );
@@ -1680,7 +1402,6 @@ class LocalFavoritesManager with ChangeNotifier {
       () => counts[result.folder] = count(result.folder),
       () => _refreshIdentityCounts(result.identities),
       refreshUpdateIds,
-      () => _syncFollowUpdatesIfAffected([result.folder]),
       notifyListeners,
     ]);
   });
@@ -1689,29 +1410,26 @@ class LocalFavoritesManager with ChangeNotifier {
     final (folder, comics) = importFavoriteFolder(
       json,
       _repository,
-      append:
-          GlobalPreferenceStore(
-            appdata.settings,
-          ).read(FavoritePreferences.newFavoriteAddTo) ==
-          'end',
+      append: true,
       translateTags: _translateTags,
     );
     _publishFavoriteChanges([
       () => refreshImportedFavorites({folder: comics}),
-      () => _syncFollowUpdatesIfAffected([folder]),
       notifyListeners,
     ]);
   }
 
   void _prepareTableForFollowUpdates(String table, [bool clearData = true]) {
     _repository.prepareForFollowUpdates(table, clearData: clearData);
-    if (GlobalPreferenceStore(
-          appdata.settings,
-        ).read(FavoritePreferences.followUpdatesFolder) ==
-        table) {
-      refreshUpdateIds();
-    }
+    refreshUpdateIds();
   }
+
+  /// Comics in [folder] with their chapter totals, for the shelf refresh.
+  ///
+  /// The update flag this used to carry is gone; the totals still feed the
+  /// unread badge.
+  List<FavoriteItemWithUpdateInfo> getComicsWithUpdatesInfo(String folder) =>
+      existsFolder(folder) ? _repository.getComicsWithUpdatesInfo(folder) : [];
 
   void _updateUpdateTime(
     String folder,
@@ -1719,14 +1437,13 @@ class LocalFavoritesManager with ChangeNotifier {
     ComicType type,
     String updateTime,
   ) {
-    final hasNewUpdate = _repository.updateUpdateTime(
+    _repository.updateUpdateTime(
       folder,
       id,
       type.value,
       updateTime,
       DateTime.now().millisecondsSinceEpoch,
     );
-    _updates.recordCommittedUpdate(folder, id, type.value, hasNewUpdate);
   }
 
   void _updateCheckTime(String folder, String id, ComicType type) =>
@@ -1737,27 +1454,11 @@ class LocalFavoritesManager with ChangeNotifier {
         DateTime.now().millisecondsSinceEpoch,
       );
 
-  int countUpdates(String folder) => _repository.countUpdates(folder);
-
-  List<FavoriteItemWithUpdateInfo> getComicsWithUpdatesInfo(String folder) =>
-      existsFolder(folder) ? _repository.getComicsWithUpdatesInfo(folder) : [];
-
   void _markAsRead(String id, ComicType type, {bool notify = true}) {
-    var folder = GlobalPreferenceStore(
-      appdata.settings,
-    ).read(FavoritePreferences.followUpdatesFolder);
-    if (folder == null || !existsFolder(folder)) {
-      return;
-    }
-    _repository.markAsRead(folder, id, type.value);
+    // Marking read is no longer tied to a tracked folder or a per-row flag: the
+    // read set lives in history, so this only reports the change.
     if (notify) {
-      _publishFavoriteChanges([
-        () => _updates.recordCommittedRead(id, type.value),
-        _notifyFollowUpdatesChanged,
-        notifyListeners,
-      ]);
-    } else {
-      _updates.recordCommittedRead(id, type.value);
+      _publishFavoriteChanges([notifyListeners]);
     }
   }
 

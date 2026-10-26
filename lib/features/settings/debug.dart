@@ -24,7 +24,12 @@ void _reportDebugFailure(Object error, StackTrace stack) {
 }
 
 class DebugPage extends StatefulWidget {
-  const DebugPage({super.key, this.evaluate});
+  const DebugPage({super.key, this.evaluate, this.embedded = false});
+
+  /// When true this widget renders as a sliver group so the combined
+  /// "Advanced & Diagnostics" page can place it in its own scroll view.
+  final bool embedded;
+
   final FutureOr<Object?> Function(String code)? evaluate;
 
   @override
@@ -87,73 +92,81 @@ class DebugPageState extends State<DebugPage> {
 
   @override
   Widget build(BuildContext context) {
+    final slivers = buildSlivers(context);
+    if (widget.embedded) return SliverMainAxisGroup(slivers: slivers);
     return SmoothCustomScrollView(
       slivers: [
         SliverAppbar(title: Text("Debug".tl)),
-        CallbackSetting(
-          title: "Reload Configs".tl,
-          actionTitle: "Reload".tl,
-          callback: reload,
-        ).toSliver(),
-        CallbackSetting(
-          title: "Open Log".tl,
-          callback: () {
-            context.to(() => const LogsPage());
-          },
-          actionTitle: 'Open'.tl,
-        ).toSliver(),
-        SwitchSetting.preference(
-          title: "Ignore Certificate Errors".tl,
-          preference: NetworkPreferences.ignoreBadCertificate,
-        ).toSliver(),
-        SliverToBoxAdapter(
-          child: Column(
-            children: [
-              const SizedBox(height: 8),
-              const Text(
-                "JS Evaluator",
-                style: TextStyle(fontSize: 16),
-              ).toAlign(Alignment.centerLeft).paddingLeft(16),
-              Container(
-                width: double.infinity,
-                height: 200,
-                margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-                child: TextField(
-                  controller: controller,
-                  maxLines: null,
-                  expands: true,
-                  textAlign: TextAlign.start,
-                  textAlignVertical: TextAlignVertical.top,
-                  decoration: InputDecoration(
-                    border: const OutlineInputBorder(),
-                    contentPadding: const EdgeInsets.all(8),
-                  ),
-                ),
-              ),
-              TextButton(
-                onPressed: running ? null : run,
-                child: Text(running ? 'Loading'.tl : 'Run'.tl),
-              ).toAlign(Alignment.centerRight).paddingRight(16),
-              const Text(
-                "Result",
-                style: TextStyle(fontSize: 16),
-              ).toAlign(Alignment.centerLeft).paddingLeft(16),
-              Container(
-                width: double.infinity,
-                height: 200,
-                margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-                decoration: BoxDecoration(
-                  border: Border.all(color: context.colorScheme.outline),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: SingleChildScrollView(
-                  child: SelectableText(result).paddingAll(4),
-                ),
-              ),
-            ],
-          ),
-        ),
+        ...slivers,
       ],
     );
   }
+
+  /// The settings slivers without an app bar, so a combined page can place
+  /// them after its own section heading in a single scroll view.
+  List<Widget> buildSlivers(BuildContext context) => [
+    CallbackSetting(
+      title: "Reload Configs".tl,
+      actionTitle: "Reload".tl,
+      callback: reload,
+    ).toSliver(),
+    CallbackSetting(
+      title: "Open Log".tl,
+      callback: () {
+        context.to(() => const LogsPage());
+      },
+      actionTitle: 'Open'.tl,
+    ).toSliver(),
+    SwitchSetting.preference(
+      title: "Ignore Certificate Errors".tl,
+      preference: NetworkPreferences.ignoreBadCertificate,
+    ).toSliver(),
+    SliverToBoxAdapter(
+      child: Column(
+        children: [
+          const SizedBox(height: 8),
+          const Text(
+            "JS Evaluator",
+            style: TextStyle(fontSize: 16),
+          ).toAlign(Alignment.centerLeft).paddingLeft(16),
+          Container(
+            width: double.infinity,
+            height: 200,
+            margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+            child: TextField(
+              controller: controller,
+              maxLines: null,
+              expands: true,
+              textAlign: TextAlign.start,
+              textAlignVertical: TextAlignVertical.top,
+              decoration: InputDecoration(
+                border: const OutlineInputBorder(),
+                contentPadding: const EdgeInsets.all(8),
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: running ? null : run,
+            child: Text(running ? 'Loading'.tl : 'Run'.tl),
+          ).toAlign(Alignment.centerRight).paddingRight(16),
+          const Text(
+            "Result",
+            style: TextStyle(fontSize: 16),
+          ).toAlign(Alignment.centerLeft).paddingLeft(16),
+          Container(
+            width: double.infinity,
+            height: 200,
+            margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+            decoration: BoxDecoration(
+              border: Border.all(color: context.colorScheme.outline),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: SingleChildScrollView(
+              child: SelectableText(result).paddingAll(4),
+            ),
+          ),
+        ],
+      ),
+    ),
+  ];
 }

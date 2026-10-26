@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:venera_next/features/reader/history_writer.dart';
 import 'package:venera_next/foundation/image_work.dart';
-import 'package:venera_next/features/reader/reading_session.dart';
 import 'package:venera_next/foundation/operation_failure.dart';
 
 class ReaderSessionFailure implements FailureDetails {
@@ -27,26 +26,23 @@ class ReaderSessionFailure implements FailureDetails {
   String toString() => message;
 }
 
-/// Owns progress and duration lifetimes for one reader. Platform lifecycle
+/// Owns progress lifetimes for one reader. Platform lifecycle
 /// events are adapted to foreground state; content readiness is independent.
 class ReaderSession {
   ReaderSession({
-    required ReadingSessionTracker durations,
     required ReaderHistoryWriter progress,
-    required void Function(bool paused) pauseAutoReading,
+    required void Function(bool paused) onPauseChanged,
     required FutureOr<void> Function() onClosed,
     required bool foreground,
     ImageWork? imageWork,
-  }) : _durations = durations,
-       _progress = progress,
-       _pauseAutoReading = pauseAutoReading,
+  }) : _progress = progress,
+       _onPauseChanged = onPauseChanged,
        _onClosed = onClosed,
        _foreground = foreground,
        _imageWork = imageWork ?? ImageWork();
 
-  final ReadingSessionTracker _durations;
   final ReaderHistoryWriter _progress;
-  final void Function(bool) _pauseAutoReading;
+  final void Function(bool) _onPauseChanged;
   final FutureOr<void> Function() _onClosed;
   final ImageWork _imageWork;
   bool _foreground;
@@ -66,23 +62,13 @@ class ReaderSession {
     if (_disposed) return;
     if (_contentReady != ready) _revision++;
     _contentReady = ready;
-    _updateDuration();
   }
 
   void setForeground(bool foreground) {
     if (_disposed) return;
     if (_foreground != foreground) _revision++;
     _foreground = foreground;
-    _pauseAutoReading(!foreground || _holds.isNotEmpty);
-    _updateDuration();
-  }
-
-  void _updateDuration() {
-    if (!_disposed && _holds.isEmpty && _foreground && _contentReady) {
-      _durations.start();
-    } else {
-      unawaited(_durations.pause());
-    }
+    _onPauseChanged(!foreground || _holds.isNotEmpty);
   }
 
   void scheduleProgress() {
@@ -93,27 +79,25 @@ class ReaderSession {
     _progress.schedule();
   }
 
-  /// Synchronously stop reading time before a host starts waiting on another
+  /// Synchronously stop accepted work before a host starts waiting on another
   /// owner's saves. Separate holds compose and each release is idempotent.
   void Function() holdForExit() {
     if (_disposed) return () {};
     final hold = Object();
     _holds.add(hold);
     final releaseImages = _imageWork.holdForExit();
-    if (_durations.isRunning) _revision++;
-    _updateDuration();
     try {
-      _pauseAutoReading(true);
+      _onPauseChanged(true);
     } catch (error, stack) {
       _holds.remove(hold);
       final failures =
           <({String operation, Object error, StackTrace stackTrace})>[
-            (operation: 'pause auto reading', error: error, stackTrace: stack),
+            (operation: 'pause session', error: error, stackTrace: stack),
           ];
       _restoreAfterHold(
         releaseImages,
         failures,
-        restoreAutoReading: _holds.isEmpty,
+        restorePause: _holds.isEmpty,
       );
       if (failures.length > 1) throw ReaderSessionFailure(failures);
       rethrow;
@@ -136,7 +120,7 @@ class ReaderSession {
   void _restoreAfterHold(
     void Function() releaseImages,
     List<({String operation, Object error, StackTrace stackTrace})> failures, {
-    bool restoreAutoReading = true,
+    bool restorePause = true,
   }) {
     void observe(String operation, void Function() restore) {
       try {
@@ -152,13 +136,12 @@ class ReaderSession {
 
     observe('resume image operations', releaseImages);
     if (_disposed) return;
-    if (restoreAutoReading) {
+    if (restorePause) {
       observe(
-        'resume auto reading',
-        () => _pauseAutoReading(!_foreground || _holds.isNotEmpty),
+        'resume session',
+        () => _onPauseChanged(!_foreground || _holds.isNotEmpty),
       );
     }
-    observe('resume duration', _updateDuration);
   }
 
   /// Save without destroying a mounted reader. A later shutdown failure can
@@ -268,11 +251,9 @@ class ReaderSession {
       await Future.wait([
         images,
         observe('progress', finalize ? _progress.dispose : _progress.flush),
-        observe('duration', finalize ? _durations.dispose : _durations.flush),
       ]);
       failures.addAll(imageFailures);
-      // A content completion can schedule progress after its writer drained
-      // while the duration writer is still pending. Join that snapshot too.
+      // A content completion can schedule progress after its writer drained.
       if (_revision != revision) continue;
       // Some writes may have committed even when another failed. Mark those
       // changes for sync after draining, preserving save and notify errors.
@@ -290,13 +271,11 @@ class ReaderSession {
     }
   }
 
-  /// Submit pending progress immediately and stop the duration clock, then
-  /// drain both writers before notifying the application once.
+  /// Submit pending progress immediately, then drain the writer before
+  /// notifying the application once.
   Future<void> dispose() {
     if (_closing != null) return _closing!;
-    if (_durations.isRunning) _revision++;
     _disposed = true;
-    unawaited(_durations.pause());
     // Freeze image operations synchronously even when a preparation is still
     // saving. _drain will join this same close once that preparation settles.
     final imageClosing = _imageWork.dispose();

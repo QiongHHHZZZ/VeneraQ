@@ -25,7 +25,6 @@ class ReaderGestureDetector extends StatefulWidget {
     required this.isMenuOpen,
     required this.toggleMenu,
     required this.openSettings,
-    required this.openChapters,
     required this.child,
   });
   final ImageWork imageWork;
@@ -33,7 +32,7 @@ class ReaderGestureDetector extends StatefulWidget {
   final ReaderGestureRequest? Function() createRequest;
   final void Function(ReaderGesturePort port, bool attached) onPortChanged;
   final bool Function() isMenuOpen;
-  final VoidCallback toggleMenu, openSettings, openChapters;
+  final VoidCallback toggleMenu, openSettings;
   final Widget child;
   @override
   State<ReaderGestureDetector> createState() => ReaderGestureDetectorState();
@@ -51,7 +50,7 @@ class ReaderGestureDetectorState extends State<ReaderGestureDetector>
   ReaderGestureRequest? _sequence, _tapTarget;
   ({ReaderGestureRequest request, Offset global, Offset local})? _pendingTap;
   Timer? _tapTimer, _longPressTimer;
-  VoidCallback? _releasePause, _releaseZoom;
+  VoidCallback? _releaseZoom;
   int? _primaryPointer;
   Offset _movement = Offset.zero;
   Offset _lastPosition = Offset.zero;
@@ -153,8 +152,8 @@ class ReaderGestureDetectorState extends State<ReaderGestureDetector>
     _sequence = _tapTarget = null;
     _primaryPointer = null;
     _pointers.clear();
-    final releaseZoom = _releaseZoom, releasePause = _releasePause;
-    _releaseZoom = _releasePause = null;
+    final releaseZoom = _releaseZoom;
+    _releaseZoom = null;
     final drag = _drag;
     _drag = [];
     _longPressUsed = false;
@@ -167,12 +166,8 @@ class ReaderGestureDetectorState extends State<ReaderGestureDetector>
     try {
       releaseZoom?.call();
     } finally {
-      try {
-        for (final listener in drag) {
-          listener.onCancel?.call();
-        }
-      } finally {
-        releasePause?.call();
+      for (final listener in drag) {
+        listener.onCancel?.call();
       }
     }
   }
@@ -215,7 +210,6 @@ class ReaderGestureDetectorState extends State<ReaderGestureDetector>
     if (_sequence != null && _sequence!.identity != request.identity) _retire();
     _sequence = request;
     _pointers.add(event.pointer);
-    _releasePause ??= request.acquirePause();
     if (!_accepts(request)) {
       _retire();
       return;
@@ -252,15 +246,12 @@ class ReaderGestureDetectorState extends State<ReaderGestureDetector>
       cancelPendingTap();
       _longPressUsed = true;
       if (_movement.distanceSquared < _distanceSquared) {
-        switch (request.preferences.longPressAction) {
-          case 'zoom':
-            final viewport = request.viewport;
-            if (viewport != null) {
-              _releaseZoom = () => viewport.handleLongPressUp(_lastPosition);
-              viewport.handleLongPressDown(event.position);
-            }
-          case 'autoReading':
-            request.toggleAutomaticReading();
+        if (!request.preferences.enableLongPressToZoom) return;
+        // Long press zooms at the press position until the pointer is released.
+        final viewport = request.viewport;
+        if (viewport != null) {
+          _releaseZoom = () => viewport.handleLongPressUp(_lastPosition);
+          viewport.handleLongPressDown(event.position);
         }
       } else {
         final generation = _generation;
@@ -352,10 +343,7 @@ class ReaderGestureDetectorState extends State<ReaderGestureDetector>
 
   void _releaseCompletedPointers() {
     if (_pointers.isEmpty) {
-      final release = _releasePause;
-      _releasePause = null;
       _sequence = null;
-      release?.call();
     }
   }
 
@@ -374,6 +362,8 @@ class ReaderGestureDetectorState extends State<ReaderGestureDetector>
     }
     final box = context.findRenderObject()! as RenderBox;
     final local = box.globalToLocal(event.globalPosition);
+    // With double tap disabled there is no second tap to wait for, so a single
+    // tap acts immediately instead of after the double-tap delay.
     if (!request.preferences.enableDoubleTapToZoom) {
       _tap(request, event.globalPosition, local);
       return;
@@ -410,7 +400,6 @@ class ReaderGestureDetectorState extends State<ReaderGestureDetector>
       widget.toggleMenu();
       return;
     }
-    if (request.onCommentsPage) return;
     if (request.preferences.enableTapToTurnPages) {
       final size = (context.findRenderObject()! as RenderBox).size;
       final coordinate = request.vertical ? local.dy : local.dx;
@@ -427,7 +416,7 @@ class ReaderGestureDetectorState extends State<ReaderGestureDetector>
   }
 
   void _showMenu(ReaderGestureRequest request, Offset location) {
-    final settings = widget.openSettings, chapters = widget.openChapters;
+    final settings = widget.openSettings;
     void invoke(VoidCallback action) {
       if (_accepts(request)) action();
     }
@@ -440,11 +429,6 @@ class ReaderGestureDetectorState extends State<ReaderGestureDetector>
           icon: Icons.settings,
           text: 'Settings'.tl,
           onClick: () => invoke(settings),
-        ),
-        MenuEntry(
-          icon: Icons.menu,
-          text: 'Chapters'.tl,
-          onClick: () => invoke(chapters),
         ),
         MenuEntry(
           icon: Icons.fullscreen,
@@ -521,7 +505,6 @@ class ReaderGestureDetectorState extends State<ReaderGestureDetector>
     onPointerSignal: (event) {
       final request = widget.createRequest();
       if (request == null || !_accepts(request)) return;
-      request.stopAutomaticReading();
       if (event is PointerScrollEvent &&
           !HardwareKeyboard.instance.isControlPressed) {
         request.turnWheel(event.scrollDelta.dy > 0);

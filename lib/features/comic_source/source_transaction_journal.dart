@@ -29,8 +29,7 @@ class SourceTransactionJournal {
     'explore_pages',
     'categories',
     'favorites',
-    'searchSources',
-  };
+    };
 
   final String root;
   final Database _db;
