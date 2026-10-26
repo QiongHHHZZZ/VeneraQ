@@ -3,7 +3,7 @@
 # VeneraQ
 
 ![Flutter](https://img.shields.io/badge/Flutter-3.41.4-02569B?logo=flutter&logoColor=white&style=flat-square)
-[![Release](https://img.shields.io/github/v/release/VeneraQ/VeneraQ?label=Release&color=10B981&style=flat-square)](https://github.com/VeneraQ/VeneraQ/releases/latest)
+[![Release](https://img.shields.io/github/v/release/QiongHHHZZZ/VeneraQ?label=Release&color=10B981&style=flat-square)](https://github.com/QiongHHHZZZ/VeneraQ/releases/latest)
 ![License](https://img.shields.io/badge/License-GPL--3.0-10B981?style=flat-square)
 ![Platform](https://img.shields.io/badge/Platform-Android-3DDC84?logo=android&logoColor=white&style=flat-square)
 
@@ -15,7 +15,7 @@
 
 ## 下载
 
-从 [Releases](https://github.com/VeneraQ/VeneraQ/releases/latest) 安装 APK：
+从 [Releases](https://github.com/QiongHHHZZZ/VeneraQ/releases/latest) 安装 APK：
 
 - `VeneraQ-xxx-android.apk` — 通用版，推荐
 - 另有 ARM64 / ARM32 / x86_64 单独版本

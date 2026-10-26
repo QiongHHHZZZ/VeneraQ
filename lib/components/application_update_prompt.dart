@@ -134,7 +134,7 @@ class ApplicationUpdatePrompt {
                 Navigator.of(context).pop();
                 try {
                   await launchUrlString(
-                    'https://github.com/VeneraQ/VeneraQ/releases',
+                    'https://github.com/QiongHHHZZZ/VeneraQ/releases',
                   );
                 } catch (error, stack) {
                   Log.error('Open application release', error, stack);

@@ -28,7 +28,7 @@ flutter --version
 ## 获取依赖
 
 ```bash
-git clone https://github.com/VeneraQ/VeneraQ.git
+git clone https://github.com/QiongHHHZZZ/VeneraQ.git
 cd VeneraQ
 flutter pub get --enforce-lockfile
 ```

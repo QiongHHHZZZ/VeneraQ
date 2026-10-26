@@ -1,7 +1,7 @@
 name: venera_next
 description: "VeneraQ - a comic reader for Android."
 publish_to: 'none'
-homepage: https://github.com/VeneraQ/VeneraQ
+homepage: https://github.com/QiongHHHZZZ/VeneraQ
 version: 2.0.0+2
 
 environment:
