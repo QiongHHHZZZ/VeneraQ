@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="assets/readme_icon.png" width="128" alt="VeneraQ" />
+
 # VeneraQ
 
 ![Flutter](https://img.shields.io/badge/Flutter-3.41.4-02569B?logo=flutter&logoColor=white&style=flat-square)
