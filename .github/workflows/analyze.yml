@@ -25,6 +25,34 @@ jobs:
           RUSTFLAGS: --cfg reqwest_unstable
         run: cargo test --locked --manifest-path packages/rhttp/rust/Cargo.toml --lib
 
+  rust-advisories:
+    name: Rhttp 依赖安全公告
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    # Advisory only. The local rhttp carries a callback-drain patch that the
+    # published package does not, so it cannot be swapped for the pub.dev
+    # release to inherit upstream's dependency bumps. Failing the build here
+    # would leave every push red for advisories this repository cannot fix
+    # without forking the patch forward; the report is uploaded instead.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+      - name: 安装固定版本的审计工具
+        run: cargo install cargo-audit --version 0.22.2 --locked --no-default-features
+      - name: 扫描锁定的 Rust 依赖
+        run: |
+          mkdir -p build/security
+          cargo audit --file packages/rhttp/rust/Cargo.lock \
+            2>&1 | tee build/security/rust-audit.log
+      - name: 保留审计结果
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: rust-dependency-audit
+          path: build/security/rust-audit.log
+          if-no-files-found: ignore
+          retention-days: 30
+
   analyze:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
