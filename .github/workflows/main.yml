@@ -78,5 +78,5 @@ jobs:
         run: gh release edit "${GITHUB_REF_NAME}" --draft=false
       - name: 清理 jsDelivr CDN 缓存
         run: |
-          curl -s "https://purge.jsdelivr.net/gh/VeneraQ/VeneraQ@main/pubspec.yaml" | jq '.status'
-          curl -s "https://purge.jsdelivr.net/gh/VeneraQ/VeneraQ@main/CHANGELOG.md" | jq '.status'
+          curl -s "https://purge.jsdelivr.net/gh/QiongHHHZZZ/VeneraQ@main/pubspec.yaml" | jq '.status'
+          curl -s "https://purge.jsdelivr.net/gh/QiongHHHZZZ/VeneraQ@main/CHANGELOG.md" | jq '.status'
